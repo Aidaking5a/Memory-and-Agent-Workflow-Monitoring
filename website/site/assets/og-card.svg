@@ -1,0 +1,19 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="Theia OG card">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0c0707"/>
+      <stop offset="100%" stop-color="#070707"/>
+    </linearGradient>
+    <linearGradient id="r" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#ff6b6b"/>
+      <stop offset="100%" stop-color="#ff2e2e"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="1120" cy="40" r="300" fill="#ff2e2e" opacity="0.12"/>
+  <circle cx="120" cy="620" r="260" fill="#ff2e2e" opacity="0.12"/>
+  <rect x="70" y="80" width="1060" height="470" rx="28" fill="none" stroke="#3d1b1b"/>
+  <text x="110" y="260" font-family="Bebas Neue, Impact, sans-serif" font-size="130" letter-spacing="8" fill="url(#r)">THEIA</text>
+  <text x="110" y="330" font-family="Sora, Segoe UI, sans-serif" font-size="42" fill="#f5efef">Trusted Agent Orchestration &amp; Memory Observability</text>
+  <text x="110" y="390" font-family="Sora, Segoe UI, sans-serif" font-size="28" fill="#c1aaaa">Permission-based oversight for serious AI operations.</text>
+</svg>

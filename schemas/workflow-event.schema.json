@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://theia.dev/schemas/workflow-event.schema.json",
+  "title": "WorkflowEvent",
+  "type": "object",
+  "required": [
+    "eventId",
+    "workspaceId",
+    "agentId",
+    "runId",
+    "eventType",
+    "timestamp",
+    "payload",
+    "source",
+    "evidenceRefs"
+  ],
+  "properties": {
+    "eventId": { "type": "string" },
+    "workspaceId": { "type": "string" },
+    "agentId": { "type": "string" },
+    "runId": { "type": "string" },
+    "taskId": { "type": "string" },
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "run.started",
+        "run.completed",
+        "run.failed",
+        "task.created",
+        "task.updated",
+        "task.completed",
+        "tool_call.started",
+        "tool_call.completed",
+        "tool_call.failed",
+        "memory.read",
+        "memory.changed",
+        "checkpoint.created",
+        "reasoning.claim",
+        "reasoning.conclusion",
+        "approval.requested",
+        "approval.granted",
+        "approval.denied",
+        "privileged_action.attempted",
+        "privileged_action.blocked",
+        "privileged_action.executed"
+      ]
+    },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "payload": { "type": "object" },
+    "source": {
+      "type": "object",
+      "required": ["connectorId"],
+      "properties": {
+        "connectorId": { "type": "string" },
+        "filePath": { "type": "string" },
+        "objectPath": { "type": "string" },
+        "contentHash": { "type": "string" }
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "eventId": { "type": "string" },
+          "memoryVersionId": { "type": "string" },
+          "excerpt": { "type": "string" }
+        }
+      }
+    }
+  }
+}

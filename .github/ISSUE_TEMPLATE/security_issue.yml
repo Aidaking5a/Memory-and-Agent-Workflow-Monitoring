@@ -1,0 +1,8 @@
+name: Security issue
+description: Report a potential security issue privately
+labels: ["security"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not disclose exploitable details publicly. Use SECURITY.md reporting channel for private disclosure.

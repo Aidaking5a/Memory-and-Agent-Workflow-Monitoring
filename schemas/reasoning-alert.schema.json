@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://theia.dev/schemas/reasoning-alert.schema.json",
+  "title": "ReasoningAlert",
+  "type": "object",
+  "required": [
+    "alertId",
+    "workspaceId",
+    "runId",
+    "agentId",
+    "category",
+    "severity",
+    "confidence",
+    "status",
+    "title",
+    "explanation",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "alertId": { "type": "string" },
+    "workspaceId": { "type": "string" },
+    "runId": { "type": "string" },
+    "agentId": { "type": "string" },
+    "category": {
+      "type": "string",
+      "enum": [
+        "unsupported_assumption",
+        "stale_memory",
+        "contradiction",
+        "hallucination_risk",
+        "evidence_gap",
+        "loop_behavior",
+        "tool_mismatch",
+        "overconfidence_without_verification",
+        "task_drift",
+        "unsafe_automation_escalation"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["info", "low", "medium", "high", "critical"]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "confidenceBand": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["open", "acknowledged", "dismissed", "resolved"]
+    },
+    "title": { "type": "string" },
+    "explanation": { "type": "string" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  }
+}

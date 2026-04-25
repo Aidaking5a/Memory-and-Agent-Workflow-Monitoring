@@ -1,0 +1,119 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Theia Security & Trust Center | Consent, Least Privilege, Auditability</title>
+    <meta
+      name="description"
+      content="Understand Theia's trust architecture: explicit permission boundaries, local-first processing, SAML-ready auth, redaction, and audit chain integrity."
+    />
+    <meta name="robots" content="index,follow" />
+    <link rel="canonical" href="https://theiaops.ai/security.html" />
+    <link rel="icon" href="/assets/theia-icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header" role="banner">
+      <div class="container topbar">
+        <a class="brand" href="/">
+          <span class="brand-mark">TH</span>
+          <span class="brand-label">THEIA</span>
+        </a>
+        <button class="nav-toggle" data-nav-toggle aria-expanded="false" aria-controls="site-nav">Menu</button>
+        <nav id="site-nav" class="nav" data-nav-menu aria-label="Primary">
+          <a href="/">Home</a>
+          <a href="/product.html">Product</a>
+          <a href="/use-cases.html">Use Cases</a>
+          <a class="active" href="/security.html">Security</a>
+          <a href="/pricing.html">Pricing</a>
+          <a href="/resources.html">Resources</a>
+          <a class="cta-small" href="/contact.html">Book Demo</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main" class="section">
+      <div class="container">
+        <h1>Security And Trust Center</h1>
+        <p class="section-sub">
+          Theia is built for authorized oversight only. No covert monitoring, no credential theft patterns, and no
+          privilege bypass behavior.
+        </p>
+
+        <div class="card-grid">
+          <article class="card">
+            <h3>Permission Boundaries</h3>
+            <ul>
+              <li>Connector and file scopes are explicit and revocable</li>
+              <li>Least-privilege defaults for each workspace</li>
+              <li>No hidden access collection</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Local-First Processing</h3>
+            <ul>
+              <li>Memory parsing and reasoning analysis run locally by default</li>
+              <li>Optional cloud control-plane is opt-in</li>
+              <li>Sensitive fields can be redacted pre-export</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Identity And Access</h3>
+            <ul>
+              <li>SAML-ready control-plane authentication</li>
+              <li>Role-based policy model (owner, operator, reviewer, auditor)</li>
+              <li>Session audit events for login and logout traces</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Auditability</h3>
+            <ul>
+              <li>Tamper-evident chain hash model</li>
+              <li>Permission grant/revoke event history</li>
+              <li>Run timeline evidence references</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Operational Controls</h3>
+            <ul>
+              <li>Signed release workflow (recommended for distribution)</li>
+              <li>CI quality gates for public repository hygiene</li>
+              <li>Security disclosure channel via SECURITY.md</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Data Lifecycle</h3>
+            <ul>
+              <li>Explicit offboarding and deletion paths</li>
+              <li>Transparent retention behavior</li>
+              <li>No hidden telemetry monetization</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-grid">
+        <div>
+          <h4>Theia</h4>
+          <p>Defensive, transparent, consent-based software only.</p>
+        </div>
+        <div>
+          <h4>Trust Docs</h4>
+          <a href="/resources.html">Documentation</a>
+          <a href="mailto:security@theiaops.ai">security@theiaops.ai</a>
+        </div>
+        <div>
+          <h4>Actions</h4>
+          <a href="/contact.html">Request Security Review</a>
+        </div>
+      </div>
+      <div class="container footer-note">© <span data-current-year></span> Theia.</div>
+    </footer>
+
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>

@@ -1,0 +1,115 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Contact Theia | Demo and Onboarding</title>
+    <meta
+      name="description"
+      content="Request a Theia demo, onboarding support, or security review."
+    />
+    <meta name="robots" content="index,follow" />
+    <link rel="canonical" href="https://theiaops.ai/contact.html" />
+    <link rel="icon" href="/assets/theia-icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header" role="banner">
+      <div class="container topbar">
+        <a class="brand" href="/">
+          <span class="brand-mark">TH</span>
+          <span class="brand-label">THEIA</span>
+        </a>
+        <button class="nav-toggle" data-nav-toggle aria-expanded="false" aria-controls="site-nav">Menu</button>
+        <nav id="site-nav" class="nav" data-nav-menu aria-label="Primary">
+          <a href="/">Home</a>
+          <a href="/product.html">Product</a>
+          <a href="/use-cases.html">Use Cases</a>
+          <a href="/security.html">Security</a>
+          <a href="/pricing.html">Pricing</a>
+          <a href="/resources.html">Resources</a>
+          <a class="active cta-small" href="/contact.html">Book Demo</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main" class="section">
+      <div class="container">
+        <h1>Contact And Demo</h1>
+        <p class="section-sub">
+          Share your workflow profile and we will help you deploy Theia with safe connector boundaries and fast onboarding.
+        </p>
+
+        <div class="card-grid" style="grid-template-columns: 1.1fr 0.9fr;">
+          <article class="card">
+            <h3>Request Demo</h3>
+            <form class="form-grid" action="https://formspree.io/f/REPLACE_ME" method="POST">
+              <div>
+                <label for="name">Name</label>
+                <input id="name" name="name" autocomplete="name" required />
+              </div>
+              <div>
+                <label for="email">Work Email</label>
+                <input id="email" name="email" type="email" autocomplete="email" required />
+              </div>
+              <div>
+                <label for="role">Role</label>
+                <select id="role" name="role" required>
+                  <option value="">Select role</option>
+                  <option>AI Operator</option>
+                  <option>Research Team</option>
+                  <option>Platform Engineering</option>
+                  <option>Governance / Compliance</option>
+                  <option>Other</option>
+                </select>
+              </div>
+              <div>
+                <label for="environment">Agent Environment</label>
+                <textarea id="environment" name="environment" placeholder="Describe agent tools, data sources, and governance needs" required></textarea>
+              </div>
+              <button class="button primary" type="submit">Send Request</button>
+            </form>
+          </article>
+
+          <article class="card">
+            <h3>Direct Contacts</h3>
+            <ul>
+              <li>Sales: <a href="mailto:sales@theiaops.ai">sales@theiaops.ai</a></li>
+              <li>Support: <a href="mailto:support@theiaops.ai">support@theiaops.ai</a></li>
+              <li>Security: <a href="mailto:security@theiaops.ai">security@theiaops.ai</a></li>
+            </ul>
+
+            <h3>Typical Demo Flow</h3>
+            <ul>
+              <li>Environment scoping and connector safety review</li>
+              <li>Local-first installation and permission setup</li>
+              <li>Run replay, reasoning alerts, and audit walkthrough</li>
+              <li>Control-plane login and SAML configuration guidance</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-grid">
+        <div>
+          <h4>Theia</h4>
+          <p>Operate AI with clarity and accountability.</p>
+        </div>
+        <div>
+          <h4>Docs</h4>
+          <a href="/resources.html">Resources</a>
+        </div>
+        <div>
+          <h4>Status</h4>
+          <p>Free public rollout</p>
+        </div>
+      </div>
+      <div class="container footer-note">© <span data-current-year></span> Theia.</div>
+    </footer>
+
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>

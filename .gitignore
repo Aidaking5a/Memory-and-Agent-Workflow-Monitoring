@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+pnpm-lock.yaml
+.env
+*.log
+apps/desktop/.vite/
+apps/desktop/node_modules/
+apps/local-core/node_modules/
+apps/control-plane/node_modules/
+apps/control-plane/data/login-events.json
+packages/*/node_modules/

@@ -1,0 +1,16 @@
+﻿{
+  "name": "Theia",
+  "short_name": "Theia",
+  "description": "Trusted agent orchestration and memory observability platform.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070707",
+  "theme_color": "#0d0909",
+  "icons": [
+    {
+      "src": "/assets/theia-icon.svg",
+      "sizes": "128x128",
+      "type": "image/svg+xml"
+    }
+  ]
+}
