@@ -30,20 +30,29 @@ function asRecordArray(input: unknown): Record<string, unknown>[] {
   return [];
 }
 
+function getByLocalName(record: Record<string, unknown>, localName: string): unknown {
+  if (localName in record) {
+    return record[localName];
+  }
+
+  const matchingKey = Object.keys(record).find((key) => key.endsWith(`:${localName}`));
+  return matchingKey ? record[matchingKey] : undefined;
+}
+
 function pickMetadataNode(parsed: Record<string, unknown>): Record<string, unknown> | null {
-  const root = parsed.EntityDescriptor ?? parsed.EntitiesDescriptor;
+  const root = getByLocalName(parsed, "EntityDescriptor") ?? getByLocalName(parsed, "EntitiesDescriptor");
   if (!root || typeof root !== "object") {
     return null;
   }
 
   const rootRecord = root as Record<string, unknown>;
-  if (rootRecord.IDPSSODescriptor) {
+  if (getByLocalName(rootRecord, "IDPSSODescriptor")) {
     return rootRecord;
   }
 
-  const entities = asRecordArray(rootRecord.EntityDescriptor);
+  const entities = asRecordArray(getByLocalName(rootRecord, "EntityDescriptor"));
   for (const entity of entities) {
-    if (entity && typeof entity === "object" && "IDPSSODescriptor" in entity) {
+    if (entity && typeof entity === "object" && getByLocalName(entity, "IDPSSODescriptor")) {
       return entity as Record<string, unknown>;
     }
   }
@@ -68,26 +77,27 @@ async function resolveFromMetadata(metadataUrl: string): Promise<{ entryPoint: s
     return null;
   }
 
-  const idp = entity.IDPSSODescriptor as Record<string, unknown>;
+  const idp = getByLocalName(entity, "IDPSSODescriptor") as Record<string, unknown> | undefined;
   if (!idp || typeof idp !== "object") {
     return null;
   }
 
-  const ssoServices = asRecordArray(idp.SingleSignOnService);
+  const ssoServices = asRecordArray(getByLocalName(idp, "SingleSignOnService"));
   const redirectService = ssoServices.find((service) => service.Binding === "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect");
   const selectedService = redirectService ?? ssoServices[0];
   const entryPoint = typeof selectedService?.Location === "string" ? selectedService.Location : undefined;
 
-  const keyDescriptors = asRecordArray(idp.KeyDescriptor);
+  const keyDescriptors = asRecordArray(getByLocalName(idp, "KeyDescriptor"));
   const signingKey =
     keyDescriptors.find((descriptor) => descriptor.use === "signing") ??
     keyDescriptors.find((descriptor) => !descriptor.use) ??
     keyDescriptors[0];
 
-  const certNode = (signingKey?.KeyInfo as Record<string, unknown> | undefined)?.X509Data as
+  const keyInfo = signingKey ? (getByLocalName(signingKey, "KeyInfo") as Record<string, unknown> | undefined) : undefined;
+  const certNode = (keyInfo ? (getByLocalName(keyInfo, "X509Data") as Record<string, unknown> | undefined) : undefined) as
     | Record<string, unknown>
     | undefined;
-  const certValue = certNode?.X509Certificate;
+  const certValue = certNode ? getByLocalName(certNode, "X509Certificate") : undefined;
 
   const cert = typeof certValue === "string" ? normalizeCert(certValue) : undefined;
   if (!entryPoint || !cert) {
