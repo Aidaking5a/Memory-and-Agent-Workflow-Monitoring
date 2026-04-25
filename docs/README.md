@@ -19,5 +19,6 @@ This repository implements sections 1-13 of the Theia strategy and architecture 
 13. [Basic Implementation Pack](./13-basic-implementation-pack.md)
 14. [Control Plane SAML and Login Volume Guide](./control-plane-saml-login-volume.md)
 15. [Google Indexing Checklist](./google-indexing-checklist.md)
+16. [Keycloak SAML Quickstart](./keycloak-saml-quickstart.md)
 
 > Sections 14 and 15 were intentionally omitted per user request.

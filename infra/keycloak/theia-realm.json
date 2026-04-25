@@ -1,0 +1,46 @@
+﻿{
+  "realm": "theia",
+  "enabled": true,
+  "displayName": "Theia Local Realm",
+  "clients": [
+    {
+      "clientId": "theia-control-plane",
+      "name": "Theia Control Plane",
+      "description": "Local SAML client for Theia control-plane",
+      "protocol": "saml",
+      "enabled": true,
+      "redirectUris": [
+        "http://localhost:4620/auth/saml/callback"
+      ],
+      "baseUrl": "http://localhost:4620/dashboard",
+      "adminUrl": "http://localhost:4620/auth/saml/callback",
+      "rootUrl": "http://localhost:4620",
+      "attributes": {
+        "saml.assertion.signature": "true",
+        "saml.server.signature": "true",
+        "saml.client.signature": "false",
+        "saml.force.post.binding": "true",
+        "saml.authnstatement": "true",
+        "saml.encrypt": "false",
+        "saml.signature.algorithm": "RSA_SHA256",
+        "saml_name_id_format": "username"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "theia.user",
+      "enabled": true,
+      "email": "theia.user@local.test",
+      "firstName": "Theia",
+      "lastName": "Tester",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "TheiaPass123!",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}
