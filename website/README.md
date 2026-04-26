@@ -6,8 +6,8 @@ This folder now contains both messaging drafts and a production-ready static web
 
 - Path: `website/site`
 - Style: red/black premium theme
-- Pages: home, product, use-cases, security, pricing, resources, contact, 404
-- SEO: canonical tags, Open Graph, Twitter card, robots.txt, sitemap.xml, JSON-LD
+- Pages: home, product, use-cases, security, pricing, resources, contact, keyword guides, changelog, case studies, 404
+- SEO: canonical tags, Open Graph, Twitter card, robots.txt, sitemap.xml, RSS feed, JSON-LD
 
 ## Publish
 
@@ -21,9 +21,20 @@ After pushing to `main` in a public repo and enabling GitHub Pages Actions deplo
 
 Replace these values before launch:
 - `https://theiaops.ai` in HTML canonical/OG/sitemap/robots
-- `YOUR_ORG/YOUR_REPO` in `website/site/resources.html`
 - `REPLACE_WITH_GOOGLE_VERIFICATION_TOKEN` in `website/site/index.html`
-- `REPLACE_ME` Formspree endpoint in `website/site/contact.html`
+- `data-api-base-url` in `website/site/contact.html` (currently set to `https://theia-control-plane.onrender.com`)
+
+For lead intake to work cross-origin, configure the control-plane env var:
+
+- `THEIA_LEADS_ALLOW_ORIGINS=https://aidaking5a.github.io`
+
+## Domain Switch Utility
+
+Use the script below to switch canonical and sitemap origin values:
+
+```powershell
+scripts\set-site-origin.cmd -NewOrigin https://www.your-domain.com -CustomDomainHost www.your-domain.com
+```
 
 ## Content Drafts
 

@@ -1,0 +1,53 @@
+name: Visibility Refresh Reminder
+
+on:
+  schedule:
+    - cron: "0 9 1 * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  open-reminder:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create monthly SEO freshness issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const now = new Date();
+            const month = now.toISOString().slice(0, 7);
+            const title = `Monthly visibility refresh (${month})`;
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100
+            });
+
+            const exists = issues.some((issue) => issue.title === title);
+            if (exists) {
+              core.info(`Issue already exists: ${title}`);
+              return;
+            }
+
+            const body = [
+              "Run the monthly visibility checklist:",
+              "",
+              "1. Update `website/site/changelog.html` with latest release notes.",
+              "2. Publish or revise one entry in `website/site/case-studies.html`.",
+              "3. Check `website/site/sitemap.xml` lastmod dates and submit in Search Console.",
+              "4. Request indexing for updated pages.",
+              "5. Add one quality backlink from docs/community channels.",
+              "6. Update `website/site/feed.xml` if updates were published."
+            ].join("\n");
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ["documentation"]
+            });
