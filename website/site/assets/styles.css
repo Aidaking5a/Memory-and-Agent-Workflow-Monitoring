@@ -393,28 +393,6 @@ td {
   gap: 0.65rem;
 }
 
-.honeypot-wrap {
-  position: absolute;
-  left: -9999px;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-}
-
-.form-feedback {
-  min-height: 1.3rem;
-  font-size: 0.9rem;
-  color: var(--muted);
-}
-
-.form-feedback.ok {
-  color: var(--ok);
-}
-
-.form-feedback.error {
-  color: var(--red-soft);
-}
-
 label {
   font-weight: 600;
   font-size: 0.86rem;

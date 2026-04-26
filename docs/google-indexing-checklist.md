@@ -1,31 +1,25 @@
-# Google Indexing Checklist for Theia Website
+﻿# Google Indexing Checklist for Theia Website
 
-1. Set the production site origin:
-- for GitHub Pages path: `https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring`
-- for custom domain: run `scripts\set-site-origin.cmd -NewOrigin https://www.YOUR_DOMAIN.com -CustomDomainHost www.YOUR_DOMAIN.com`
+1. Set your final production domain and update all placeholders:
+- `https://theiaops.ai` values in website files
+- `YOUR_ORG/YOUR_REPO` links
+- Google verification token meta tag
 
-2. Set your Search Console verification meta tag in `website/site/index.html`:
-- `<meta name="google-site-verification" content="..." />`
+2. Enable GitHub Pages for the public repository using GitHub Actions.
 
-3. Enable GitHub Pages deployment via GitHub Actions.
-
-4. Confirm these pages are publicly reachable:
+3. Confirm these URLs are live:
 - `/`
 - `/robots.txt`
 - `/sitemap.xml`
-- `/feed.xml`
 
-5. In Google Search Console, submit:
+4. Add the domain to Google Search Console.
+
+5. Verify ownership using the meta tag in `website/site/index.html`:
+- `<meta name="google-site-verification" content="..." />`
+
+6. Submit sitemap URL in Search Console:
 - `https://YOUR_DOMAIN/sitemap.xml`
-- `https://YOUR_DOMAIN/feed.xml`
 
-6. Request indexing for priority pages:
-- `/`
-- `/product.html`
-- `/agent-observability.html`
-- `/ai-memory-orchestration.html`
-- `/workflow-auditability.html`
-- `/changelog.html`
-- `/case-studies.html`
+7. Request indexing for homepage and key pages.
 
-7. Monitor indexing status and enhancement reports weekly.
+8. Monitor Coverage and Core Web Vitals in Search Console.

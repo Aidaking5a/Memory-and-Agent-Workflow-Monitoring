@@ -10,6 +10,4 @@ apps/desktop/node_modules/
 apps/local-core/node_modules/
 apps/control-plane/node_modules/
 apps/control-plane/data/login-events.json
-apps/control-plane/data/lead-submissions.json
 packages/*/node_modules/
-_theia_metadata.xml

@@ -10,7 +10,6 @@
     />
     <meta name="robots" content="index,follow" />
     <link rel="canonical" href="https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/contact.html" />
-    <link rel="alternate" type="application/rss+xml" title="Theia Updates" href="feed.xml" />
     <link rel="icon" href="assets/theia-icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="assets/styles.css" />
   </head>
@@ -45,10 +44,7 @@
         <div class="card-grid" style="grid-template-columns: 1.1fr 0.9fr;">
           <article class="card">
             <h3>Request Demo</h3>
-            <p class="section-sub" style="margin-top:0;">
-              Form submissions are handled by Theia control-plane lead intake and appear in the authenticated lead inbox.
-            </p>
-            <form class="form-grid" data-theia-lead-form data-api-base-url="https://theia-control-plane.onrender.com">
+            <form class="form-grid" action="https://formspree.io/f/REPLACE_ME" method="POST">
               <div>
                 <label for="name">Name</label>
                 <input id="name" name="name" autocomplete="name" required />
@@ -56,10 +52,6 @@
               <div>
                 <label for="email">Work Email</label>
                 <input id="email" name="email" type="email" autocomplete="email" required />
-              </div>
-              <div>
-                <label for="company">Company</label>
-                <input id="company" name="company" autocomplete="organization" />
               </div>
               <div>
                 <label for="role">Role</label>
@@ -76,12 +68,6 @@
                 <label for="environment">Agent Environment</label>
                 <textarea id="environment" name="environment" placeholder="Describe agent tools, data sources, and governance needs" required></textarea>
               </div>
-              <input type="hidden" name="sourcePage" value="/contact.html" />
-              <div class="honeypot-wrap" aria-hidden="true">
-                <label for="website">Website</label>
-                <input id="website" name="website" autocomplete="off" tabindex="-1" />
-              </div>
-              <div class="form-feedback" data-form-feedback role="status" aria-live="polite"></div>
               <button class="button primary" type="submit">Send Request</button>
             </form>
           </article>
@@ -115,11 +101,9 @@
         <div>
           <h4>Docs</h4>
           <a href="resources.html">Resources</a>
-          <a href="changelog.html">Changelog</a>
         </div>
         <div>
           <h4>Status</h4>
-          <a href="case-studies.html">Case Studies</a>
           <p>Free public rollout</p>
         </div>
       </div>

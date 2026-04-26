@@ -8,7 +8,7 @@
   "theme_color": "#0d0909",
   "icons": [
     {
-      "src": "assets/theia-icon.svg",
+      "src": "/assets/theia-icon.svg",
       "sizes": "128x128",
       "type": "image/svg+xml"
     }
