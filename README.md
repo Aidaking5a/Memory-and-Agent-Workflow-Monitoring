@@ -54,6 +54,32 @@ pnpm --filter @theia/control-plane dev
 pnpm --filter @theia/desktop dev
 ```
 
+## One-Command Local Startup (Windows)
+
+Run once (persistent env + strong session secret for your Windows user):
+
+```powershell
+pnpm run setup:local
+```
+
+Daily startup (Keycloak + local core + control plane + desktop):
+
+```powershell
+pnpm run dev:stack
+```
+
+You can also double-click:
+
+- `scripts/start-theia-dev.cmd`
+
+The `.cmd` wrappers run PowerShell with a per-process bypass, so you do not need to change global execution policy settings.
+
+Stop all local services:
+
+```powershell
+pnpm run dev:stop
+```
+
 ## Public Website
 
 A full static marketing site is included at `website/site` with a red/black design system, SEO tags, sitemap, and robots configuration.

@@ -4,6 +4,7 @@ import passport from "passport";
 import { Strategy as SamlStrategy } from "passport-saml";
 import type { Profile, VerifiedCallback } from "passport-saml";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { LoginMetricsStore } from "./metrics-store.js";
 import { resolveSamlConfig } from "./saml-config.js";
@@ -30,17 +31,39 @@ await metricsStore.init();
 const samlConfig = await resolveSamlConfig();
 const app = express();
 
+function resolveSessionSecret(): string {
+  const configuredSecret = process.env.THEIA_SESSION_SECRET?.trim();
+  if (configuredSecret && configuredSecret.length >= 32) {
+    return configuredSecret;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("THEIA_SESSION_SECRET must be set to at least 32 characters in production.");
+  }
+
+  const ephemeralSecret = crypto.randomBytes(48).toString("base64");
+  console.warn("THEIA_SESSION_SECRET missing or too short. Using ephemeral dev session secret for this run.");
+  return ephemeralSecret;
+}
+
+function resolveSecureCookie(): boolean {
+  const raw = process.env.THEIA_COOKIE_SECURE?.toLowerCase();
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return process.env.NODE_ENV === "production";
+}
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(
   session({
-    secret: process.env.THEIA_SESSION_SECRET ?? "theia-dev-session-secret",
+    secret: resolveSessionSecret(),
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
       sameSite: "lax",
-      secure: false
+      secure: resolveSecureCookie()
     }
   })
 );
