@@ -198,3 +198,20 @@ export async function retireStaleWorkflowCandidates(maxAgeDays: number): Promise
 
   return retired.length;
 }
+
+export async function updateWorkflowPromotionPolicy(policy: DashboardData["workflowPolicy"]): Promise<void> {
+  const response = await fetch(`${coreBaseUrl()}/workflows/policy`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      ...policy,
+      actorId: operatorId()
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+}

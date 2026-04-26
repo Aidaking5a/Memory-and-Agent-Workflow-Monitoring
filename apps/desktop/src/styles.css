@@ -369,6 +369,35 @@ th {
   border-color: #c7ddef;
 }
 
+.policy-form {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.45rem;
+  margin-top: 0.6rem;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  font-size: 0.86rem;
+}
+
+.field-row input[type="number"] {
+  width: 130px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.25rem 0.4rem;
+  background: #fff;
+  color: var(--text);
+}
+
+.field-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
 @media (max-width: 940px) {
   .app-shell {
     grid-template-columns: 1fr;

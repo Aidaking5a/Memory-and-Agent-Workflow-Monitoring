@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   approveWorkflowCandidate,
   rejectWorkflowCandidate,
   retireStaleWorkflowCandidates,
-  rollbackWorkflowCandidate
+  rollbackWorkflowCandidate,
+  updateWorkflowPromotionPolicy
 } from "../api";
 import { SeverityBadge } from "../components/SeverityBadge";
 import type { DashboardData } from "../types";
@@ -23,9 +24,34 @@ interface WorkflowGovernanceViewProps {
 export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: WorkflowGovernanceViewProps) {
   const [activeAction, setActiveAction] = useState<{ workflowId: string; kind: WorkflowActionKind } | null>(null);
   const [isRetiring, setIsRetiring] = useState(false);
+  const [isEditingPolicy, setIsEditingPolicy] = useState(false);
+  const [isSavingPolicy, setIsSavingPolicy] = useState(false);
+  const [policyDraft, setPolicyDraft] = useState(data.workflowPolicy);
   const [feedback, setFeedback] = useState<{ level: "success" | "error"; message: string } | null>(null);
 
-  const controlsDisabled = isRefreshing || isRetiring || activeAction !== null;
+  useEffect(() => {
+    if (!isEditingPolicy) {
+      setPolicyDraft(data.workflowPolicy);
+    }
+  }, [data.workflowPolicy, isEditingPolicy]);
+
+  const controlsDisabled = isRefreshing || isRetiring || isSavingPolicy || activeAction !== null;
+
+  const policyRows = useMemo(
+    () =>
+      [
+        { key: "minConfidenceScore", label: "Min confidence", step: 0.01, min: 0, max: 1 },
+        { key: "minEvaluatorAgreement", label: "Min evaluator agreement", step: 0.01, min: 0, max: 1 },
+        { key: "minToolGroundingScore", label: "Min tool grounding", step: 0.01, min: 0, max: 1 },
+        { key: "minUtilityRate", label: "Min utility", step: 0.01, min: 0, max: 1 },
+        { key: "maxOverlapRate", label: "Max overlap", step: 0.01, min: 0, max: 1 },
+        { key: "maxContradictionRate", label: "Max contradiction rate", step: 0.01, min: 0, max: 1 },
+        { key: "maxStaleUseRate", label: "Max stale-use rate", step: 0.01, min: 0, max: 1 },
+        { key: "minEvidencePacketCount", label: "Min evidence packet count", step: 1, min: 1, max: 9999 },
+        { key: "minSafeAutomationEvidenceCount", label: "Min safe-automation evidence count", step: 1, min: 0, max: 9999 }
+      ] as const,
+    []
+  );
 
   async function executeWorkflowAction(
     workflowId: string,
@@ -118,6 +144,69 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
     }
   }
 
+  function setPolicyNumberField(key: keyof DashboardData["workflowPolicy"], value: string, fallback: number) {
+    const parsed = Number.parseFloat(value);
+    setPolicyDraft((prev) => ({
+      ...prev,
+      [key]: Number.isFinite(parsed) ? parsed : fallback
+    }));
+  }
+
+  function validatePolicyDraft(): string | null {
+    const unitIntervalFields: Array<keyof DashboardData["workflowPolicy"]> = [
+      "minConfidenceScore",
+      "minEvaluatorAgreement",
+      "minToolGroundingScore",
+      "minUtilityRate",
+      "maxOverlapRate",
+      "maxContradictionRate",
+      "maxStaleUseRate"
+    ];
+
+    for (const field of unitIntervalFields) {
+      const value = policyDraft[field];
+      if (typeof value !== "number" || value < 0 || value > 1) {
+        return `${field} must be between 0 and 1.`;
+      }
+    }
+
+    if (!Number.isInteger(policyDraft.minEvidencePacketCount) || policyDraft.minEvidencePacketCount < 1) {
+      return "minEvidencePacketCount must be an integer greater than or equal to 1.";
+    }
+    if (
+      !Number.isInteger(policyDraft.minSafeAutomationEvidenceCount) ||
+      policyDraft.minSafeAutomationEvidenceCount < 0
+    ) {
+      return "minSafeAutomationEvidenceCount must be an integer greater than or equal to 0.";
+    }
+
+    return null;
+  }
+
+  async function handleSavePolicy() {
+    const validationError = validatePolicyDraft();
+    if (validationError) {
+      setFeedback({ level: "error", message: validationError });
+      return;
+    }
+
+    setFeedback(null);
+    setIsSavingPolicy(true);
+    try {
+      await updateWorkflowPromotionPolicy(policyDraft);
+      await onRefresh();
+      setIsEditingPolicy(false);
+      setFeedback({ level: "success", message: "Workflow promotion policy updated." });
+    } catch (error) {
+      setFeedback({
+        level: "error",
+        message: error instanceof Error ? error.message : "Failed to update workflow policy."
+      });
+    } finally {
+      setIsSavingPolicy(false);
+    }
+  }
+
   return (
     <section className="view">
       <div className="panel-grid">
@@ -137,20 +226,98 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
           </p>
         </article>
         <article className="panel">
-          <h3>Promotion Policy</h3>
-          <ul className="dense-list">
-            <li>Min confidence: {percentage(data.workflowPolicy.minConfidenceScore)}</li>
-            <li>Min evaluator agreement: {percentage(data.workflowPolicy.minEvaluatorAgreement)}</li>
-            <li>Min tool grounding: {percentage(data.workflowPolicy.minToolGroundingScore)}</li>
-            <li>Min utility: {percentage(data.workflowPolicy.minUtilityRate)}</li>
-            <li>Max overlap: {percentage(data.workflowPolicy.maxOverlapRate)}</li>
-            <li>Max contradiction rate: {percentage(data.workflowPolicy.maxContradictionRate)}</li>
-            <li>Max stale-use rate: {percentage(data.workflowPolicy.maxStaleUseRate)}</li>
-            <li>Min evidence packet count: {data.workflowPolicy.minEvidencePacketCount}</li>
-            <li>
-              High-impact human approval: {data.workflowPolicy.requireHumanApprovalForHighImpact ? "required" : "optional"}
-            </li>
-          </ul>
+          <div className="panel-header-row">
+            <h3>Promotion Policy</h3>
+            {!isEditingPolicy ? (
+              <button
+                className="action-btn neutral"
+                disabled={controlsDisabled}
+                onClick={() => setIsEditingPolicy(true)}
+                type="button"
+              >
+                Edit Policy
+              </button>
+            ) : (
+              <div className="action-group">
+                <button
+                  className="action-btn primary"
+                  disabled={controlsDisabled}
+                  onClick={() => void handleSavePolicy()}
+                  type="button"
+                >
+                  {isSavingPolicy ? "Saving..." : "Save"}
+                </button>
+                <button
+                  className="action-btn neutral"
+                  disabled={controlsDisabled}
+                  onClick={() => {
+                    setPolicyDraft(data.workflowPolicy);
+                    setIsEditingPolicy(false);
+                  }}
+                  type="button"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+
+          {!isEditingPolicy ? (
+            <ul className="dense-list">
+              <li>Min confidence: {percentage(data.workflowPolicy.minConfidenceScore)}</li>
+              <li>Min evaluator agreement: {percentage(data.workflowPolicy.minEvaluatorAgreement)}</li>
+              <li>Min tool grounding: {percentage(data.workflowPolicy.minToolGroundingScore)}</li>
+              <li>Min utility: {percentage(data.workflowPolicy.minUtilityRate)}</li>
+              <li>Max overlap: {percentage(data.workflowPolicy.maxOverlapRate)}</li>
+              <li>Max contradiction rate: {percentage(data.workflowPolicy.maxContradictionRate)}</li>
+              <li>Max stale-use rate: {percentage(data.workflowPolicy.maxStaleUseRate)}</li>
+              <li>Min evidence packet count: {data.workflowPolicy.minEvidencePacketCount}</li>
+              <li>
+                Min safe-automation evidence count: {data.workflowPolicy.minSafeAutomationEvidenceCount}
+              </li>
+              <li>
+                High-impact human approval:{" "}
+                {data.workflowPolicy.requireHumanApprovalForHighImpact ? "required" : "optional"}
+              </li>
+            </ul>
+          ) : (
+            <div className="policy-form">
+              {policyRows.map((row) => (
+                <label className="field-row" key={row.key}>
+                  <span>{row.label}</span>
+                  <input
+                    disabled={controlsDisabled}
+                    max={row.max}
+                    min={row.min}
+                    step={row.step}
+                    type="number"
+                    value={policyDraft[row.key]}
+                    onChange={(event) =>
+                      setPolicyNumberField(
+                        row.key,
+                        event.currentTarget.value,
+                        data.workflowPolicy[row.key]
+                      )
+                    }
+                  />
+                </label>
+              ))}
+              <label className="field-row">
+                <span>Require human approval for high impact</span>
+                <input
+                  checked={policyDraft.requireHumanApprovalForHighImpact}
+                  disabled={controlsDisabled}
+                  type="checkbox"
+                  onChange={(event) =>
+                    setPolicyDraft((prev) => ({
+                      ...prev,
+                      requireHumanApprovalForHighImpact: event.currentTarget.checked
+                    }))
+                  }
+                />
+              </label>
+            </div>
+          )}
         </article>
       </div>
       <article className="panel">
