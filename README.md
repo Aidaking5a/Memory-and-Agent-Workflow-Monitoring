@@ -112,14 +112,35 @@ Default public form endpoint configured in [`website/site/contact.html`](./websi
 
 A full static marketing site is included at `website/site` with a red/black design system, SEO tags, sitemap, and robots configuration.
 
+Live URL:
+
+- `https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/`
+
+Keyword landing pages:
+
+- `https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/agent-observability.html`
+- `https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/ai-memory-orchestration.html`
+- `https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/workflow-auditability.html`
+
+Freshness pages:
+
+- `https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/changelog.html`
+- `https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/case-studies.html`
+- `https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/feed.xml`
+
 GitHub Pages deploy workflow:
 - `.github/workflows/pages.yml`
+- monthly reminder workflow: `.github/workflows/visibility-refresh-reminder.yml`
 
 Before going live, replace placeholder values:
 - domain `https://theiaops.ai`
-- `YOUR_ORG/YOUR_REPO` links in `website/site/resources.html`
 - Google verification token in `website/site/index.html`
 - contact form endpoint in `website/site/contact.html`
+
+Search visibility operations:
+
+- `docs/google-indexing-checklist.md`
+- `docs/seo-visibility-playbook.md`
 
 ## Connector Priorities Implemented
 

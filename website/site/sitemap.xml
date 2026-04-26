@@ -1,31 +1,64 @@
-﻿<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/</loc>
+    <lastmod>2026-04-26</lastmod>
     <priority>1.0</priority>
   </url>
   <url>
     <loc>https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/product.html</loc>
+    <lastmod>2026-04-26</lastmod>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/use-cases.html</loc>
+    <lastmod>2026-04-26</lastmod>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/security.html</loc>
+    <lastmod>2026-04-26</lastmod>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/pricing.html</loc>
+    <lastmod>2026-04-26</lastmod>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/resources.html</loc>
-    <priority>0.7</priority>
+    <lastmod>2026-04-26</lastmod>
+    <priority>0.9</priority>
   </url>
   <url>
     <loc>https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/contact.html</loc>
+    <lastmod>2026-04-26</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/agent-observability.html</loc>
+    <lastmod>2026-04-26</lastmod>
+    <priority>0.85</priority>
+  </url>
+  <url>
+    <loc>https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/ai-memory-orchestration.html</loc>
+    <lastmod>2026-04-26</lastmod>
+    <priority>0.85</priority>
+  </url>
+  <url>
+    <loc>https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/workflow-auditability.html</loc>
+    <lastmod>2026-04-26</lastmod>
+    <priority>0.85</priority>
+  </url>
+  <url>
+    <loc>https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/changelog.html</loc>
+    <lastmod>2026-04-26</lastmod>
+    <priority>0.75</priority>
+  </url>
+  <url>
+    <loc>https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/case-studies.html</loc>
+    <lastmod>2026-04-26</lastmod>
     <priority>0.8</priority>
   </url>
 </urlset>
+

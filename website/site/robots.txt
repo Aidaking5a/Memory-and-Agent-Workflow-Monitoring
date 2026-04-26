@@ -1,5 +1,6 @@
-﻿User-agent: *
+User-agent: *
 Allow: /
 
 Sitemap: https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/sitemap.xml
+Sitemap: https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/feed.xml
 
