@@ -19,6 +19,7 @@ import {
   CodexCliConnector,
   CustomJsonConnector,
   LocalFileConnector,
+  OpenClawConnector,
   type Connector
 } from "@theia/connector-sdk";
 import { evaluateRun } from "@theia/reasoning-engine";
@@ -47,6 +48,7 @@ interface TheiaCoreConfig {
   fileSources: string[];
   codexLogSources: string[];
   customJsonSources: string[];
+  openClawSources: string[];
   workflowPolicy?: Partial<WorkflowPromotionPolicy>;
   defaultTenantId?: string;
   now?: () => Date;
@@ -232,6 +234,28 @@ export class TheiaCore {
       });
 
       this.connectors.push(customJsonConnector);
+    }
+
+    if (this.config.openClawSources.length > 0) {
+      const openClawConnector = new OpenClawConnector({
+        connectorId: "openclaw-main",
+        logPaths: this.config.openClawSources
+      });
+
+      await openClawConnector.init({
+        scope: {
+          workspaceId: this.config.workspaceId,
+          approvedPaths: this.config.approvedPaths
+        },
+        context: {
+          workspaceId: this.config.workspaceId,
+          now: () => this.now(),
+          emitEvent: (event) => this.events.push(event),
+          emitAudit: (message, metadata) => this.appendConnectorAudit(message, metadata)
+        }
+      });
+
+      this.connectors.push(openClawConnector);
     }
   }
 

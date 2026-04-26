@@ -35,6 +35,7 @@ describe("TheiaCore workflow governance", () => {
       fileSources: [],
       codexLogSources: [],
       customJsonSources: [],
+      openClawSources: [],
       workflowPolicy: {
         minEvidencePacketCount: 1
       }

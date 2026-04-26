@@ -1,6 +1,10 @@
 import type { DashboardData } from "../types";
 
 export function SettingsView({ data }: { data: DashboardData }) {
+  const openClawConnector = data.connectors.find((connector) =>
+    `${connector.connectorId} ${connector.scope}`.toLowerCase().includes("openclaw")
+  );
+
   return (
     <section className="view">
       <div className="panel-grid">
@@ -34,6 +38,9 @@ export function SettingsView({ data }: { data: DashboardData }) {
             <li>Cloud sync disabled by default.</li>
             <li>Sensitive data redaction enabled for exports.</li>
             <li>Permission recertification interval: 30 days.</li>
+            <li>
+              OpenClaw compatibility: {openClawConnector ? `connected (${openClawConnector.status})` : "not configured"}
+            </li>
           </ul>
         </article>
       </div>

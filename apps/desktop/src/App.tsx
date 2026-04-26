@@ -77,7 +77,7 @@ export function App() {
         <TopBar workspaceName={data.workspaceName} timeRange={data.timeRange} />
         <section className="view-header">
           <h2>{VIEW_LABELS[view]}</h2>
-          <p>Transparent observability for memory, workflow state, and reasoning quality.</p>
+          <p>High-signal control surface for memory integrity, workflow governance, and operator decisions.</p>
         </section>
         {body}
       </main>

@@ -110,13 +110,18 @@ export async function loadDashboardData(): Promise<DashboardData> {
       workflowReport.totalCandidates === 0
         ? 0
         : Math.round((workflowReport.promotedCandidates / workflowReport.totalCandidates) * 100);
+    const openClawStreams = connectors.filter((connector) =>
+      `${connector.connectorId} ${connector.name}`.toLowerCase().includes("openclaw")
+    ).length;
+    const governancePressure = workflowReport.pendingReviewCandidates + workflowReport.conflictOpenCount;
 
     return {
       ...mockData,
       metrics: [
         { label: "Active Runs", value: `${runs.filter((run) => run.status === "running").length}` },
-        { label: "Open Alerts", value: `${mockData.alerts.filter((alert) => alert.status === "open").length}` },
+        { label: "Governance Pressure", value: `${governancePressure}`, trend: `${workflowReport.pendingReviewCandidates} pending` },
         { label: "Workflow Promotions", value: `${promotedRate}%`, trend: `${workflowReport.promotedCandidates} promoted` },
+        { label: "OpenClaw Streams", value: `${openClawStreams}`, trend: openClawStreams > 0 ? "+connected" : "not configured" },
         { label: "Connector Health", value: `${connectorHealthPct}%` }
       ],
       timeline: runs.slice(0, 6).map((run, index) => ({

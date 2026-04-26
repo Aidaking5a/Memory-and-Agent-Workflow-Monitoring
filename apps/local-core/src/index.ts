@@ -15,13 +15,18 @@ const customJsonSources = (process.env.THEIA_CUSTOM_JSON_SOURCES ?? "")
   .split(",")
   .map((entry) => entry.trim())
   .filter(Boolean);
+const openClawSources = (process.env.THEIA_OPENCLAW_LOG_SOURCES ?? "")
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter(Boolean);
 
 const core = new TheiaCore({
   workspaceId,
   approvedPaths,
   fileSources,
   codexLogSources,
-  customJsonSources
+  customJsonSources,
+  openClawSources
 });
 
 await core.initialize();

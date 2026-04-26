@@ -1,4 +1,5 @@
 import type { ViewKey } from "../types";
+import { TheiaEyeMark } from "./TheiaEyeMark";
 
 interface SidebarProps {
   current: ViewKey;
@@ -21,10 +22,12 @@ export function Sidebar({ current, onSelect }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="brand-mark">TH</div>
+        <div className="brand-mark">
+          <TheiaEyeMark size={34} />
+        </div>
         <div>
           <h1>Theia</h1>
-          <p>Control Center</p>
+          <p>Agent Operations</p>
         </div>
       </div>
       <nav>

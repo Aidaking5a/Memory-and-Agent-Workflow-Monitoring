@@ -4,9 +4,10 @@ export const mockData: DashboardData = {
   workspaceName: "Theia Design Partner Workspace",
   timeRange: "Last 24 hours",
   metrics: [
-    { label: "Active Agents", value: "6", trend: "+1" },
-    { label: "Open Alerts", value: "9", trend: "-2" },
-    { label: "Memory Revisions", value: "34", trend: "+8" },
+    { label: "Active Runs", value: "2", trend: "+1" },
+    { label: "Governance Pressure", value: "3", trend: "1 pending" },
+    { label: "Workflow Promotions", value: "33%", trend: "1 promoted" },
+    { label: "OpenClaw Streams", value: "1", trend: "+connected" },
     { label: "Connector Health", value: "98%", trend: "+1.2%" }
   ],
   agents: [
@@ -132,6 +133,12 @@ export const mockData: DashboardData = {
       scope: "run events + tool traces",
       status: "degraded",
       lastSync: "2026-04-25T08:20:00Z"
+    },
+    {
+      connectorId: "openclaw-main",
+      scope: "OpenClaw trajectories + tool observations",
+      status: "healthy",
+      lastSync: "2026-04-25T08:23:00Z"
     }
   ],
   workflowCandidates: [

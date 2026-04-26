@@ -83,6 +83,12 @@ Daily startup (Keycloak + local core + control plane + desktop):
 pnpm run dev:stack
 ```
 
+If another process is blocking `localhost:5173`, reclaim it automatically for Theia desktop:
+
+```powershell
+pnpm run dev:stack:force-port
+```
+
 You can also double-click:
 
 - `scripts/start-theia-dev.cmd`
@@ -173,6 +179,7 @@ Domain cutover helper:
 
 - `Codex CLI logs` via `CodexCliConnector`
 - `Custom JSON logs` via `CustomJsonConnector`
+- `OpenClaw traces` via `OpenClawConnector`
 - Existing `memory.md` / `bootstrap.md` ingestion via `LocalFileConnector`
 
 Local core environment variables:
@@ -180,6 +187,7 @@ Local core environment variables:
 - `THEIA_FILE_SOURCES=memory.md,bootstrap.md`
 - `THEIA_CODEX_LOG_SOURCES=/path/to/codex.log`
 - `THEIA_CUSTOM_JSON_SOURCES=/path/to/events.json`
+- `THEIA_OPENCLAW_LOG_SOURCES=/path/to/openclaw.jsonl`
 - `THEIA_APPROVED_PATHS=/approved/path/one,/approved/path/two`
 
 ## SAML Setup (Free-Provider Friendly)
