@@ -80,6 +80,25 @@ Stop all local services:
 pnpm run dev:stop
 ```
 
+## Lead Intake And Tracking
+
+The website demo form posts to:
+
+- `POST /api/public/leads` on the control plane
+
+Authenticated operators can review and manage leads in:
+
+- `http://localhost:4620/dashboard`
+
+Lead records are stored locally at:
+
+- `apps/control-plane/data/lead-submissions.json`
+
+Lead-related environment variables:
+
+- `THEIA_LEADS_ALLOW_ORIGINS` (comma-separated allowed origins for public lead POSTs)
+- `THEIA_LEADS_IP_HASH_SALT` (optional salt for privacy-preserving IP hashing)
+
 ## Public Website
 
 A full static marketing site is included at `website/site` with a red/black design system, SEO tags, sitemap, and robots configuration.
