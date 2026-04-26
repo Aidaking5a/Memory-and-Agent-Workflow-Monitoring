@@ -23,7 +23,7 @@ Replace these values before launch:
 - `https://theiaops.ai` in HTML canonical/OG/sitemap/robots
 - `YOUR_ORG/YOUR_REPO` in `website/site/resources.html`
 - `REPLACE_WITH_GOOGLE_VERIFICATION_TOKEN` in `website/site/index.html`
-- `data-api-base-url` in `website/site/contact.html` (set this to your deployed control-plane HTTPS base URL)
+- `data-api-base-url` in `website/site/contact.html` (currently set to `https://theia-control-plane.onrender.com`)
 
 For lead intake to work cross-origin, configure the control-plane env var:
 

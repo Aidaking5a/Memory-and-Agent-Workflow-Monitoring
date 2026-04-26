@@ -33,6 +33,13 @@ await leadsStore.init();
 
 const samlConfig = await resolveSamlConfig();
 const app = express();
+const isProduction = process.env.NODE_ENV === "production";
+const devLoginEnabled = (() => {
+  const raw = process.env.THEIA_ENABLE_DEV_LOGIN?.toLowerCase();
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return !isProduction;
+})();
 
 const leadAllowedOrigins = new Set(
   (process.env.THEIA_LEADS_ALLOW_ORIGINS ??
@@ -132,6 +139,9 @@ function toCsvValue(input: string | undefined): string {
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+if (isProduction || process.env.THEIA_TRUST_PROXY === "true") {
+  app.set("trust proxy", 1);
+}
 app.use(
   session({
     secret: resolveSessionSecret(),
@@ -207,7 +217,8 @@ app.get("/health", (_request, response) => {
     status: "ok",
     service: "theia-control-plane",
     samlEnabled: samlConfig.enabled,
-    samlProvider: samlConfig.provider
+    samlProvider: samlConfig.provider,
+    devLoginEnabled
   });
 });
 
@@ -255,6 +266,11 @@ app.post("/auth/saml/callback", (request, response, next) => {
 });
 
 app.get("/auth/dev/login", async (request, response) => {
+  if (!devLoginEnabled) {
+    response.status(403).json({ message: "Dev login is disabled on this deployment." });
+    return;
+  }
+
   const user: AppUser = {
     id: "dev-user",
     email: "dev@theia.local",
@@ -443,11 +459,13 @@ app.get(["/", "/dashboard"], (request, response) => {
   const user = request.user;
   const authButton = samlConfig.enabled
     ? "<a class=\"btn\" href=\"/auth/saml/login\">Sign in with SAML</a>"
-    : `<a class=\"btn secondary\" href=\"/auth/dev/login\">Use local dev login</a>`;
+    : devLoginEnabled
+      ? `<a class=\"btn secondary\" href=\"/auth/dev/login\">Use local dev login</a>`
+      : "";
 
   const authStatus = user
     ? `<div class=\"auth-card\"><p><strong>Signed in:</strong> ${user.displayName ?? user.id}</p><p>${user.email ?? "no-email"}</p><a class=\"link\" href=\"/auth/logout\">Sign out</a></div>`
-    : `<div class=\"auth-card\"><p><strong>Not signed in.</strong></p><p>${samlConfig.enabled ? "SAML is enabled for this control plane." : samlConfig.reason ?? "SAML config missing."}</p>${authButton}</div>`;
+    : `<div class=\"auth-card\"><p><strong>Not signed in.</strong></p><p>${samlConfig.enabled ? "SAML is enabled for this control plane." : devLoginEnabled ? samlConfig.reason ?? "SAML config missing." : "SAML is required on this deployment. Configure SAML to access the operator dashboard."}</p>${authButton}</div>`;
 
   const html = `<!doctype html>
 <html>
@@ -826,12 +844,15 @@ app.get(["/", "/dashboard"], (request, response) => {
   response.type("html").send(html);
 });
 
-const port = Number(process.env.THEIA_CONTROL_PLANE_PORT ?? 4620);
+const port = Number(process.env.PORT ?? process.env.THEIA_CONTROL_PLANE_PORT ?? 4620);
 app.listen(port, () => {
-  console.log(`Theia control plane listening on http://localhost:${port}`);
+  console.log(`Theia control plane listening on port ${port}`);
   if (!samlConfig.enabled) {
     console.log(`SAML disabled: ${samlConfig.reason ?? "Unknown reason"}`);
   } else {
     console.log(`SAML enabled with provider hint: ${samlConfig.provider}`);
+  }
+  if (!devLoginEnabled) {
+    console.log("Dev login is disabled for this deployment.");
   }
 });

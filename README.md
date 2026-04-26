@@ -98,6 +98,15 @@ Lead-related environment variables:
 
 - `THEIA_LEADS_ALLOW_ORIGINS` (comma-separated allowed origins for public lead POSTs)
 - `THEIA_LEADS_IP_HASH_SALT` (optional salt for privacy-preserving IP hashing)
+- `THEIA_ENABLE_DEV_LOGIN` (set `false` for public deployments)
+
+## Public HTTPS Control Plane (Render)
+
+This repo includes [`render.yaml`](./render.yaml) for deploying the control plane with HTTPS and a strict lead origin allowlist.
+
+Default public form endpoint configured in [`website/site/contact.html`](./website/site/contact.html):
+
+- `https://theia-control-plane.onrender.com/api/public/leads`
 
 ## Public Website
 
