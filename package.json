@@ -14,7 +14,8 @@
     "dev:control-plane": "pnpm --filter @theia/control-plane dev",
     "setup:local": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/configure-theia-local-env.ps1",
     "dev:stack": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-theia-dev.ps1",
-    "dev:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/stop-theia-dev.ps1"
+    "dev:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/stop-theia-dev.ps1",
+    "domain:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/prepare-custom-domain.ps1"
   },
   "devDependencies": {
     "@types/node": "24.3.0",

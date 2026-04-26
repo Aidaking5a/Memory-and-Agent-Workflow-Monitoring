@@ -56,6 +56,8 @@ pnpm --filter @theia/control-plane dev
 pnpm --filter @theia/desktop dev
 ```
 
+Desktop URL: `http://localhost:5173` (fixed dev port).
+
 Workflow governance APIs (local core):
 
 - `POST /runs/:runId/workflows/derive`
@@ -154,11 +156,18 @@ Search visibility operations:
 
 - `docs/google-indexing-checklist.md`
 - `docs/seo-visibility-playbook.md`
+- `docs/domain-acquisition-and-cutover-plan.md`
 
 AWM hardening and integrated-app planning:
 
 - `docs/awm-hardening-implementation.md`
 - `docs/downloadable-app-integration-plan.md`
+
+Domain cutover helper:
+
+```powershell
+.\scripts\prepare-custom-domain.ps1 -PrimaryDomain "www.yourdomain.com" -Apply
+```
 
 ## Connector Priorities Implemented
 
