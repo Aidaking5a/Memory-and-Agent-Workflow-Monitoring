@@ -28,7 +28,16 @@ export const eventTypeSchema = z.enum([
   "approval.denied",
   "privileged_action.attempted",
   "privileged_action.blocked",
-  "privileged_action.executed"
+  "privileged_action.executed",
+  "workflow.derived_decision",
+  "workflow.candidate_created",
+  "workflow.promotion_requested",
+  "workflow.promoted",
+  "workflow.rejected",
+  "workflow.rollback",
+  "workflow.compatibility_conflict",
+  "workflow.retired",
+  "workflow.expired"
 ]);
 export type EventType = z.infer<typeof eventTypeSchema>;
 
@@ -42,7 +51,11 @@ export const reasoningAlertCategorySchema = z.enum([
   "tool_mismatch",
   "overconfidence_without_verification",
   "task_drift",
-  "unsafe_automation_escalation"
+  "unsafe_automation_escalation",
+  "workflow_context_mismatch",
+  "workflow_induction_noise",
+  "workflow_set_conflict",
+  "workflow_promotion_gate_failed"
 ]);
 export type ReasoningAlertCategory = z.infer<typeof reasoningAlertCategorySchema>;
 
@@ -209,6 +222,120 @@ export const runSnapshotSchema = z.object({
   run: runSchema,
   tasks: z.array(taskSchema),
   events: z.array(workflowEventSchema),
-  memoryVersions: z.array(memoryVersionSchema)
+  memoryVersions: z.array(memoryVersionSchema),
+  workflowCandidates: z.array(z.lazy(() => workflowCandidateSchema)).default([])
 });
 export type RunSnapshot = z.infer<typeof runSnapshotSchema>;
+
+export const workflowNamespaceSchema = z.object({
+  workspaceId: z.string(),
+  tenantId: z.string().optional(),
+  domain: z.string(),
+  taskFamily: z.string()
+});
+export type WorkflowNamespace = z.infer<typeof workflowNamespaceSchema>;
+
+export const workflowCandidateStatusSchema = z.enum([
+  "candidate",
+  "pending_review",
+  "promoted",
+  "rejected",
+  "rolled_back",
+  "retired",
+  "expired"
+]);
+export type WorkflowCandidateStatus = z.infer<typeof workflowCandidateStatusSchema>;
+
+export const workflowGateMetricsSchema = z.object({
+  confidenceScore: z.number().min(0).max(1),
+  evaluatorAgreement: z.number().min(0).max(1),
+  toolGroundingScore: z.number().min(0).max(1),
+  utilityRate: z.number().min(0).max(1),
+  overlapRate: z.number().min(0).max(1),
+  contradictionRate: z.number().min(0).max(1),
+  staleUseRate: z.number().min(0).max(1),
+  evidencePacketCount: z.number().int().nonnegative(),
+  safeAutomationEvidenceCount: z.number().int().nonnegative()
+});
+export type WorkflowGateMetrics = z.infer<typeof workflowGateMetricsSchema>;
+
+export const workflowPromotionPolicySchema = z.object({
+  minConfidenceScore: z.number().min(0).max(1),
+  minEvaluatorAgreement: z.number().min(0).max(1),
+  minToolGroundingScore: z.number().min(0).max(1),
+  minUtilityRate: z.number().min(0).max(1),
+  maxOverlapRate: z.number().min(0).max(1),
+  maxContradictionRate: z.number().min(0).max(1),
+  maxStaleUseRate: z.number().min(0).max(1),
+  minEvidencePacketCount: z.number().int().positive(),
+  minSafeAutomationEvidenceCount: z.number().int().nonnegative(),
+  requireHumanApprovalForHighImpact: z.boolean()
+});
+export type WorkflowPromotionPolicy = z.infer<typeof workflowPromotionPolicySchema>;
+
+export const workflowEvidencePacketSchema = z.object({
+  packetId: z.string(),
+  runId: z.string(),
+  generatedAt: isoDateTime,
+  summary: z.string(),
+  refs: z.array(evidenceReferenceSchema)
+});
+export type WorkflowEvidencePacket = z.infer<typeof workflowEvidencePacketSchema>;
+
+export const workflowCandidateSchema = z.object({
+  workflowId: z.string(),
+  workspaceId: z.string(),
+  sourceRunId: z.string(),
+  title: z.string(),
+  summary: z.string(),
+  status: workflowCandidateStatusSchema,
+  impactLevel: severitySchema,
+  namespace: workflowNamespaceSchema,
+  gateMetrics: workflowGateMetricsSchema,
+  policyAtDecisionTime: workflowPromotionPolicySchema,
+  evidencePacket: workflowEvidencePacketSchema,
+  compatibilityNotes: z.array(z.string()).default([]),
+  conflictWithWorkflowIds: z.array(z.string()).default([]),
+  provenance: z.object({
+    derivedFromRunId: z.string(),
+    sourceEventIds: z.array(z.string()).default([]),
+    objectiveSnapshot: z.string(),
+    objectiveHash: z.string()
+  }),
+  createdAt: isoDateTime,
+  updatedAt: isoDateTime,
+  lastUsedAt: isoDateTime.optional(),
+  promotedAt: isoDateTime.optional(),
+  rolledBackAt: isoDateTime.optional(),
+  retiredAt: isoDateTime.optional(),
+  retiredReason: z.string().optional()
+});
+export type WorkflowCandidate = z.infer<typeof workflowCandidateSchema>;
+
+export const workflowPromotionDecisionSchema = z.object({
+  workflowId: z.string(),
+  workspaceId: z.string(),
+  approved: z.boolean(),
+  requestedAt: isoDateTime,
+  decidedAt: isoDateTime,
+  decidedBy: z.string(),
+  humanApprovalProvided: z.boolean(),
+  reasons: z.array(z.string()).default([])
+});
+export type WorkflowPromotionDecision = z.infer<typeof workflowPromotionDecisionSchema>;
+
+export const workflowReleaseGateReportSchema = z.object({
+  workspaceId: z.string(),
+  generatedAt: isoDateTime,
+  totalCandidates: z.number().int().nonnegative(),
+  promotedCandidates: z.number().int().nonnegative(),
+  pendingReviewCandidates: z.number().int().nonnegative(),
+  rejectedCandidates: z.number().int().nonnegative(),
+  rolledBackCandidates: z.number().int().nonnegative(),
+  conflictOpenCount: z.number().int().nonnegative(),
+  avgConfidenceScore: z.number().min(0).max(1),
+  avgUtilityRate: z.number().min(0).max(1),
+  avgContradictionRate: z.number().min(0).max(1),
+  avgStaleUseRate: z.number().min(0).max(1)
+});
+export type WorkflowReleaseGateReport = z.infer<typeof workflowReleaseGateReportSchema>;

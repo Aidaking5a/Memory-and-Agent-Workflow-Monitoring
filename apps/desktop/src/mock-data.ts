@@ -133,5 +133,73 @@ export const mockData: DashboardData = {
       status: "degraded",
       lastSync: "2026-04-25T08:20:00Z"
     }
-  ]
+  ],
+  workflowCandidates: [
+    {
+      workflowId: "wf_2001",
+      title: "observability: reconcile memory with latest tool evidence",
+      status: "pending_review",
+      impactLevel: "high",
+      namespace: "tenant:design-partner / theia.so / observability",
+      confidenceScore: 0.86,
+      utilityRate: 0.78,
+      overlapRate: 0.22,
+      contradictionRate: 0.05,
+      staleUseRate: 0.03,
+      conflictCount: 0,
+      updatedAt: "2026-04-25T08:30:00Z"
+    },
+    {
+      workflowId: "wf_2000",
+      title: "delivery: staged release with audit checkpoints",
+      status: "promoted",
+      impactLevel: "medium",
+      namespace: "tenant:design-partner / theia.so / delivery",
+      confidenceScore: 0.91,
+      utilityRate: 0.88,
+      overlapRate: 0.31,
+      contradictionRate: 0.02,
+      staleUseRate: 0.04,
+      conflictCount: 0,
+      updatedAt: "2026-04-25T07:55:00Z"
+    },
+    {
+      workflowId: "wf_1994",
+      title: "analysis: summarize with weak evidence",
+      status: "rejected",
+      impactLevel: "medium",
+      namespace: "tenant:design-partner / docs.theia.so / analysis",
+      confidenceScore: 0.61,
+      utilityRate: 0.44,
+      overlapRate: 0.9,
+      contradictionRate: 0.21,
+      staleUseRate: 0.19,
+      conflictCount: 2,
+      updatedAt: "2026-04-25T06:42:00Z"
+    }
+  ],
+  workflowReport: {
+    totalCandidates: 3,
+    promotedCandidates: 1,
+    pendingReviewCandidates: 1,
+    rejectedCandidates: 1,
+    rolledBackCandidates: 0,
+    conflictOpenCount: 1,
+    avgConfidenceScore: 0.79,
+    avgUtilityRate: 0.7,
+    avgContradictionRate: 0.09,
+    avgStaleUseRate: 0.09
+  },
+  workflowPolicy: {
+    minConfidenceScore: 0.78,
+    minEvaluatorAgreement: 0.7,
+    minToolGroundingScore: 0.72,
+    minUtilityRate: 0.62,
+    maxOverlapRate: 0.88,
+    maxContradictionRate: 0.12,
+    maxStaleUseRate: 0.18,
+    minEvidencePacketCount: 2,
+    minSafeAutomationEvidenceCount: 0,
+    requireHumanApprovalForHighImpact: true
+  }
 };

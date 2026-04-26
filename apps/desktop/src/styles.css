@@ -189,6 +189,20 @@ nav {
   padding-left: 1.1rem;
 }
 
+.dense-list {
+  margin: 0.6rem 0 0;
+  padding-left: 1rem;
+}
+
+.dense-list li {
+  margin: 0.18rem 0;
+}
+
+.muted-note {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -256,6 +270,38 @@ th {
 .severity.critical {
   background: #f8d8d8;
   color: var(--danger);
+}
+
+.status-pill {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 0.22rem 0.56rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.status-pill.candidate {
+  background: #e2eef8;
+  color: #1f5a86;
+}
+
+.status-pill.pending_review {
+  background: #f6e6ca;
+  color: #8a5a1b;
+}
+
+.status-pill.promoted {
+  background: #deefe9;
+  color: #0d5a44;
+}
+
+.status-pill.rejected,
+.status-pill.rolled_back,
+.status-pill.retired,
+.status-pill.expired {
+  background: #f8d8d8;
+  color: #8f2d2d;
 }
 
 @media (max-width: 940px) {

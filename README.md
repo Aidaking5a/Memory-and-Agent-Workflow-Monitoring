@@ -30,6 +30,8 @@ Theia is a premium, consent-based memory and agent workflow orchestration platfo
 pnpm install
 ```
 
+If PowerShell execution policy blocks `pnpm`, use `pnpm.cmd` instead (for example `pnpm.cmd install`).
+
 2. Build all packages/apps:
 
 ```bash
@@ -53,6 +55,17 @@ pnpm --filter @theia/control-plane dev
 ```bash
 pnpm --filter @theia/desktop dev
 ```
+
+Workflow governance APIs (local core):
+
+- `POST /runs/:runId/workflows/derive`
+- `GET /workflows`
+- `GET /workflows/queue/pending`
+- `POST /workflows/:workflowId/review`
+- `POST /workflows/:workflowId/rollback`
+- `POST /workflows/retire-stale`
+- `GET /workflows/release-gates/report`
+- `GET /workflows/policy`
 
 ## One-Command Local Startup (Windows)
 
@@ -141,6 +154,11 @@ Search visibility operations:
 
 - `docs/google-indexing-checklist.md`
 - `docs/seo-visibility-playbook.md`
+
+AWM hardening and integrated-app planning:
+
+- `docs/awm-hardening-implementation.md`
+- `docs/downloadable-app-integration-plan.md`
 
 ## Connector Priorities Implemented
 

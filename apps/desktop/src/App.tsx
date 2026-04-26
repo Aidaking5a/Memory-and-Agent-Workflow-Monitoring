@@ -12,6 +12,7 @@ import { MemoryView } from "./views/MemoryView";
 import { OverviewView } from "./views/OverviewView";
 import { SettingsView } from "./views/SettingsView";
 import { TimelineView } from "./views/TimelineView";
+import { WorkflowGovernanceView } from "./views/WorkflowGovernanceView";
 
 const VIEW_LABELS: Record<ViewKey, string> = {
   overview: "Overview Dashboard",
@@ -19,6 +20,7 @@ const VIEW_LABELS: Record<ViewKey, string> = {
   timeline: "Workflow Timeline",
   memory: "Memory Explorer",
   alerts: "Reasoning Alert Center",
+  governance: "Workflow Governance",
   compare: "Agent Comparison",
   audit: "Audit and Permissions",
   settings: "Settings and Connectors"
@@ -44,6 +46,8 @@ export function App() {
         return <MemoryView data={data} />;
       case "alerts":
         return <AlertsView data={data} />;
+      case "governance":
+        return <WorkflowGovernanceView data={data} />;
       case "compare":
         return <CompareView data={data} />;
       case "audit":

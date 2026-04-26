@@ -22,6 +22,12 @@ function inferType(text: string): EventType {
 
   if (normalized.includes("tool") && normalized.includes("fail")) return "tool_call.failed";
   if (normalized.includes("tool") && normalized.includes("complete")) return "tool_call.completed";
+  if (normalized.includes("workflow") && normalized.includes("derived")) return "workflow.derived_decision";
+  if (normalized.includes("workflow") && normalized.includes("candidate")) return "workflow.candidate_created";
+  if (normalized.includes("workflow") && normalized.includes("promot")) return "workflow.promoted";
+  if (normalized.includes("workflow") && normalized.includes("reject")) return "workflow.rejected";
+  if (normalized.includes("workflow") && normalized.includes("rollback")) return "workflow.rollback";
+  if (normalized.includes("workflow") && normalized.includes("conflict")) return "workflow.compatibility_conflict";
   if (normalized.includes("memory") && (normalized.includes("update") || normalized.includes("change"))) {
     return "memory.changed";
   }

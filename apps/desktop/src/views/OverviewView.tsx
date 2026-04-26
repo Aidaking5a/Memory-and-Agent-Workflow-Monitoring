@@ -19,7 +19,10 @@ export function OverviewView({ data }: { data: DashboardData }) {
           <ul>
             <li>Most alerts currently originate from evidence-gap and stale-memory categories.</li>
             <li>Connector health is stable with one degraded stream requiring inspection.</li>
-            <li>High-risk runs are prioritized in the alert center and timeline views.</li>
+            <li>
+              Workflow gate queue: {data.workflowReport.pendingReviewCandidates} pending review,{" "}
+              {data.workflowReport.conflictOpenCount} open compatibility conflicts.
+            </li>
           </ul>
         </article>
         <article className="panel">

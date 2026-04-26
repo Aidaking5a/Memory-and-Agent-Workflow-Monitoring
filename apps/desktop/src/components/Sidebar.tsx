@@ -11,6 +11,7 @@ const NAV_ITEMS: Array<{ key: ViewKey; label: string }> = [
   { key: "timeline", label: "Workflow Timeline" },
   { key: "memory", label: "Memory Explorer" },
   { key: "alerts", label: "Reasoning Alerts" },
+  { key: "governance", label: "Workflow Governance" },
   { key: "compare", label: "Agent Comparison" },
   { key: "audit", label: "Audit & Permissions" },
   { key: "settings", label: "Settings" }

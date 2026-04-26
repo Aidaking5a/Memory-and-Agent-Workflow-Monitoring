@@ -26,7 +26,11 @@ const SEVERITY_BY_CATEGORY: Record<ReasoningAlertCategory, Severity> = {
   tool_mismatch: "high",
   overconfidence_without_verification: "medium",
   task_drift: "medium",
-  unsafe_automation_escalation: "critical"
+  unsafe_automation_escalation: "critical",
+  workflow_context_mismatch: "high",
+  workflow_induction_noise: "medium",
+  workflow_set_conflict: "high",
+  workflow_promotion_gate_failed: "medium"
 };
 
 const TITLE_BY_CATEGORY: Record<ReasoningAlertCategory, string> = {
@@ -39,7 +43,11 @@ const TITLE_BY_CATEGORY: Record<ReasoningAlertCategory, string> = {
   tool_mismatch: "Tool-result mismatch",
   overconfidence_without_verification: "Overconfidence without verification",
   task_drift: "Task drift from run objective",
-  unsafe_automation_escalation: "Unsafe automation escalation"
+  unsafe_automation_escalation: "Unsafe automation escalation",
+  workflow_context_mismatch: "Workflow context mismatch risk",
+  workflow_induction_noise: "Noisy workflow induction risk",
+  workflow_set_conflict: "Workflow set conflict detected",
+  workflow_promotion_gate_failed: "Workflow promotion gate failed"
 };
 
 function hashSeed(input: string): string {
@@ -376,6 +384,97 @@ function detectUnsafeEscalation(snapshot: RunSnapshot): ReasoningAlert[] {
     );
 }
 
+function detectWorkflowContextMismatch(snapshot: RunSnapshot): ReasoningAlert[] {
+  const objectiveTokens = tokenSet(snapshot.run.objective);
+  if (objectiveTokens.size === 0) return [];
+
+  return snapshot.events
+    .filter((event) => event.eventType === "workflow.derived_decision")
+    .map((event) => {
+      const workflowObjective =
+        typeof event.payload.workflowObjective === "string"
+          ? event.payload.workflowObjective
+          : typeof event.payload.workflowTitle === "string"
+            ? event.payload.workflowTitle
+            : "";
+      const workflowTokens = tokenSet(workflowObjective);
+      const alignment = jaccardSimilarity(objectiveTokens, workflowTokens);
+      const contextShiftScore =
+        typeof event.payload.contextShiftScore === "number"
+          ? Math.max(0, Math.min(1, event.payload.contextShiftScore))
+          : 0;
+      const domainChanged = Boolean(event.payload.domainChanged);
+      return { event, alignment, contextShiftScore, domainChanged };
+    })
+    .filter((entry) => entry.alignment < 0.2 && (entry.contextShiftScore > 0.55 || entry.domainChanged))
+    .map((entry) =>
+      buildAlert(
+        snapshot,
+        entry.event,
+        "workflow_context_mismatch",
+        Math.min(0.99, 0.55 + entry.contextShiftScore * 0.4 + (entry.domainChanged ? 0.1 : 0)),
+        `Workflow alignment with run objective is low (alignment=${entry.alignment.toFixed(
+          2
+        )}) while contextual shift indicators are elevated.`
+      )
+    );
+}
+
+function detectWorkflowInductionNoise(snapshot: RunSnapshot): ReasoningAlert[] {
+  return snapshot.events
+    .filter((event) => event.eventType === "workflow.candidate_created")
+    .map((event) => {
+      const signalQuality =
+        typeof event.payload.signalQuality === "number" ? Math.max(0, Math.min(1, event.payload.signalQuality)) : 0.5;
+      const sampleRuns = typeof event.payload.sampleRuns === "number" ? Math.max(0, event.payload.sampleRuns) : 0;
+      return { event, signalQuality, sampleRuns };
+    })
+    .filter((entry) => entry.signalQuality < 0.7 || entry.sampleRuns < 3)
+    .map((entry) =>
+      buildAlert(
+        snapshot,
+        entry.event,
+        "workflow_induction_noise",
+        Math.min(0.95, 0.6 + (1 - entry.signalQuality) * 0.25 + (entry.sampleRuns < 3 ? 0.1 : 0)),
+        `Workflow candidate was induced from low-signal data (signalQuality=${entry.signalQuality.toFixed(
+          2
+        )}, sampleRuns=${entry.sampleRuns}).`
+      )
+    );
+}
+
+function detectWorkflowSetConflict(snapshot: RunSnapshot): ReasoningAlert[] {
+  return snapshot.events
+    .filter((event) => event.eventType === "workflow.compatibility_conflict")
+    .map((event) =>
+      buildAlert(
+        snapshot,
+        event,
+        "workflow_set_conflict",
+        0.9,
+        "Workflow compatibility conflict detected between promoted or candidate workflow sets in the same namespace."
+      )
+    );
+}
+
+function detectWorkflowPromotionGateFailures(snapshot: RunSnapshot): ReasoningAlert[] {
+  return snapshot.events
+    .filter((event) => event.eventType === "workflow.rejected")
+    .map((event) => {
+      const gateFailures = Array.isArray(event.payload.gateFailures) ? event.payload.gateFailures.length : 1;
+      return { event, gateFailures };
+    })
+    .map((entry) =>
+      buildAlert(
+        snapshot,
+        entry.event,
+        "workflow_promotion_gate_failed",
+        Math.min(0.95, 0.65 + entry.gateFailures * 0.07),
+        `Workflow promotion was blocked by release gates (${entry.gateFailures} failed gate checks).`
+      )
+    );
+}
+
 export function evaluateRun(snapshot: RunSnapshot, options?: DetectionOptions): ReasoningAlert[] {
   const resolved = { ...DEFAULT_OPTIONS, ...options };
 
@@ -389,7 +488,11 @@ export function evaluateRun(snapshot: RunSnapshot, options?: DetectionOptions): 
     ...detectToolMismatch(snapshot),
     ...detectOverconfidence(snapshot),
     ...detectTaskDrift(snapshot),
-    ...detectUnsafeEscalation(snapshot)
+    ...detectUnsafeEscalation(snapshot),
+    ...detectWorkflowContextMismatch(snapshot),
+    ...detectWorkflowInductionNoise(snapshot),
+    ...detectWorkflowSetConflict(snapshot),
+    ...detectWorkflowPromotionGateFailures(snapshot)
   ];
 
   const unique = new Map<string, ReasoningAlert>();
