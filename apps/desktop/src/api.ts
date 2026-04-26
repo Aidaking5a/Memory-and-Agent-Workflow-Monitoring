@@ -1,8 +1,46 @@
 import { mockData } from "./mock-data";
 import type { DashboardData } from "./types";
 
+const DEFAULT_BASE_URL = "http://localhost:4318";
+
+function coreBaseUrl(): string {
+  return import.meta.env.VITE_THEIA_CORE_URL ?? DEFAULT_BASE_URL;
+}
+
+function operatorId(): string {
+  return import.meta.env.VITE_THEIA_OPERATOR_ID ?? "owner@theia";
+}
+
+async function readErrorMessage(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { message?: string };
+    if (typeof body.message === "string" && body.message.trim().length > 0) {
+      return body.message;
+    }
+  } catch {
+    // no-op
+  }
+  return `Request failed (${response.status})`;
+}
+
+async function postJson<TResponse>(path: string, body: Record<string, unknown>): Promise<TResponse> {
+  const response = await fetch(`${coreBaseUrl()}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return (await response.json()) as TResponse;
+}
+
 export async function loadDashboardData(): Promise<DashboardData> {
-  const baseUrl = import.meta.env.VITE_THEIA_CORE_URL ?? "http://localhost:4318";
+  const baseUrl = coreBaseUrl();
 
   try {
     const [runsRes, memoryRes, auditRes, connectorsRes, workflowRes, workflowReportRes, workflowPolicyRes] = await Promise.all([
@@ -125,4 +163,38 @@ export async function loadDashboardData(): Promise<DashboardData> {
   } catch {
     return mockData;
   }
+}
+
+export async function approveWorkflowCandidate(workflowId: string, reason?: string): Promise<void> {
+  await postJson(`/workflows/${encodeURIComponent(workflowId)}/review`, {
+    approved: true,
+    actorId: operatorId(),
+    reason: reason ?? "Approved in Theia desktop governance view.",
+    humanApprovalProvided: true
+  });
+}
+
+export async function rejectWorkflowCandidate(workflowId: string, reason?: string): Promise<void> {
+  await postJson(`/workflows/${encodeURIComponent(workflowId)}/review`, {
+    approved: false,
+    actorId: operatorId(),
+    reason: reason ?? "Rejected in Theia desktop governance view.",
+    humanApprovalProvided: true
+  });
+}
+
+export async function rollbackWorkflowCandidate(workflowId: string, reason: string): Promise<void> {
+  await postJson(`/workflows/${encodeURIComponent(workflowId)}/rollback`, {
+    actorId: operatorId(),
+    reason
+  });
+}
+
+export async function retireStaleWorkflowCandidates(maxAgeDays: number): Promise<number> {
+  const retired = await postJson<Array<{ workflowId: string }>>("/workflows/retire-stale", {
+    maxAgeDays,
+    actorId: operatorId()
+  });
+
+  return retired.length;
 }

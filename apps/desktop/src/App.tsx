@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { loadDashboardData } from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
@@ -29,10 +29,21 @@ const VIEW_LABELS: Record<ViewKey, string> = {
 export function App() {
   const [view, setView] = useState<ViewKey>("overview");
   const [data, setData] = useState<DashboardData>(mockData);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const refreshData = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const next = await loadDashboardData();
+      setData(next);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    void loadDashboardData().then(setData);
-  }, []);
+    void refreshData();
+  }, [refreshData]);
 
   const body = useMemo(() => {
     switch (view) {
@@ -47,7 +58,7 @@ export function App() {
       case "alerts":
         return <AlertsView data={data} />;
       case "governance":
-        return <WorkflowGovernanceView data={data} />;
+        return <WorkflowGovernanceView data={data} onRefresh={refreshData} isRefreshing={isRefreshing} />;
       case "compare":
         return <CompareView data={data} />;
       case "audit":
@@ -57,7 +68,7 @@ export function App() {
       default:
         return <OverviewView data={data} />;
     }
-  }, [data, view]);
+  }, [data, isRefreshing, refreshData, view]);
 
   return (
     <div className="app-shell">
