@@ -1,14 +1,48 @@
-import { mockData } from "./mock-data";
-import type { DashboardData } from "./types";
+import { emptyDashboardData } from "./mock-data";
+import type { DashboardData, OperatorRole, SetupState } from "./types";
 
 const DEFAULT_BASE_URL = "http://localhost:4318";
+const OPERATOR_ROLE_STORAGE_KEY = "theia.operator.role";
+const OPERATOR_ID_STORAGE_KEY = "theia.operator.id";
 
 function coreBaseUrl(): string {
   return import.meta.env.VITE_THEIA_CORE_URL ?? DEFAULT_BASE_URL;
 }
 
-function operatorId(): string {
+function envOperatorId(): string {
   return import.meta.env.VITE_THEIA_OPERATOR_ID ?? "owner@theia";
+}
+
+export function getOperatorRole(): OperatorRole {
+  const stored = window.localStorage.getItem(OPERATOR_ROLE_STORAGE_KEY);
+  if (stored === "owner" || stored === "operator" || stored === "reviewer" || stored === "auditor" || stored === "read_only") {
+    return stored;
+  }
+  return "owner";
+}
+
+export function setOperatorRole(role: OperatorRole): void {
+  window.localStorage.setItem(OPERATOR_ROLE_STORAGE_KEY, role);
+}
+
+export function getOperatorId(): string {
+  return window.localStorage.getItem(OPERATOR_ID_STORAGE_KEY) ?? envOperatorId();
+}
+
+export function setOperatorId(value: string): void {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    window.localStorage.removeItem(OPERATOR_ID_STORAGE_KEY);
+    return;
+  }
+  window.localStorage.setItem(OPERATOR_ID_STORAGE_KEY, trimmed);
+}
+
+function operatorHeaders(): Record<string, string> {
+  return {
+    "x-theia-operator-role": getOperatorRole(),
+    "x-theia-operator-id": getOperatorId()
+  };
 }
 
 async function readErrorMessage(response: Response): Promise<string> {
@@ -27,7 +61,8 @@ async function postJson<TResponse>(path: string, body: Record<string, unknown>):
   const response = await fetch(`${coreBaseUrl()}${path}`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      ...operatorHeaders()
     },
     body: JSON.stringify(body)
   });
@@ -40,140 +75,88 @@ async function postJson<TResponse>(path: string, body: Record<string, unknown>):
 }
 
 export async function loadDashboardData(): Promise<DashboardData> {
-  const baseUrl = coreBaseUrl();
-
   try {
-    const [runsRes, memoryRes, auditRes, connectorsRes, workflowRes, workflowReportRes, workflowPolicyRes] = await Promise.all([
-      fetch(`${baseUrl}/runs`),
-      fetch(`${baseUrl}/memory`),
-      fetch(`${baseUrl}/audit`),
-      fetch(`${baseUrl}/connectors/health`),
-      fetch(`${baseUrl}/workflows`),
-      fetch(`${baseUrl}/workflows/release-gates/report`),
-      fetch(`${baseUrl}/workflows/policy`)
-    ]);
-
-    if (!runsRes.ok || !memoryRes.ok || !auditRes.ok || !connectorsRes.ok || !workflowRes.ok || !workflowReportRes.ok || !workflowPolicyRes.ok) {
-      return mockData;
+    const response = await fetch(`${coreBaseUrl()}/dashboard/snapshot`, {
+      headers: operatorHeaders()
+    });
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response));
     }
-
-    const runs = (await runsRes.json()) as Array<{ runId: string; objective: string; status: string; agentId: string }>;
-    const memory = (await memoryRes.json()) as {
-      objects: Array<{ memoryId: string; sourcePath: string; sectionKey: string; latestVersionId: string }>;
-    };
-    const audit = (await auditRes.json()) as Array<{
-      timestamp: string;
-      actorId: string;
-      action: string;
-      targetType: string;
-      targetId: string;
-    }>;
-    const connectors = (await connectorsRes.json()) as Array<{
-      connectorId: string;
-      name: string;
-      health: { status: "healthy" | "degraded" | "offline"; lastSuccessfulPollAt?: string };
-    }>;
-    const workflowCandidates = (await workflowRes.json()) as Array<{
-      workflowId: string;
-      title: string;
-      status: "candidate" | "pending_review" | "promoted" | "rejected" | "rolled_back" | "retired" | "expired";
-      impactLevel: "info" | "low" | "medium" | "high" | "critical";
-      namespace: { tenantId?: string; domain: string; taskFamily: string };
-      gateMetrics: {
-        confidenceScore: number;
-        utilityRate: number;
-        overlapRate: number;
-        contradictionRate: number;
-        staleUseRate: number;
-      };
-      conflictWithWorkflowIds: string[];
-      updatedAt: string;
-    }>;
-    const workflowReport = (await workflowReportRes.json()) as {
-      totalCandidates: number;
-      promotedCandidates: number;
-      pendingReviewCandidates: number;
-      rejectedCandidates: number;
-      rolledBackCandidates: number;
-      conflictOpenCount: number;
-      avgConfidenceScore: number;
-      avgUtilityRate: number;
-      avgContradictionRate: number;
-      avgStaleUseRate: number;
-    };
-    const workflowPolicy = (await workflowPolicyRes.json()) as DashboardData["workflowPolicy"];
-
-    const healthyConnectors = connectors.filter((connector) => connector.health.status === "healthy").length;
-    const connectorHealthPct =
-      connectors.length === 0 ? 100 : Math.round((healthyConnectors / Math.max(1, connectors.length)) * 100);
-    const promotedRate =
-      workflowReport.totalCandidates === 0
-        ? 0
-        : Math.round((workflowReport.promotedCandidates / workflowReport.totalCandidates) * 100);
-    const openClawStreams = connectors.filter((connector) =>
-      `${connector.connectorId} ${connector.name}`.toLowerCase().includes("openclaw")
-    ).length;
-    const governancePressure = workflowReport.pendingReviewCandidates + workflowReport.conflictOpenCount;
-
+    return (await response.json()) as DashboardData;
+  } catch (error) {
     return {
-      ...mockData,
-      metrics: [
-        { label: "Active Runs", value: `${runs.filter((run) => run.status === "running").length}` },
-        { label: "Governance Pressure", value: `${governancePressure}`, trend: `${workflowReport.pendingReviewCandidates} pending` },
-        { label: "Workflow Promotions", value: `${promotedRate}%`, trend: `${workflowReport.promotedCandidates} promoted` },
-        { label: "OpenClaw Streams", value: `${openClawStreams}`, trend: openClawStreams > 0 ? "+connected" : "not configured" },
-        { label: "Connector Health", value: `${connectorHealthPct}%` }
-      ],
-      timeline: runs.slice(0, 6).map((run, index) => ({
-        eventId: `run-${run.runId}`,
-        ts: new Date(Date.now() - index * 60000).toISOString(),
-        eventType: `run.${run.status}`,
-        agent: run.agentId,
-        summary: run.objective
-      })),
-      memory: memory.objects.slice(0, 10).map((item, index) => ({
-        ...item,
-        updatedAt: new Date(Date.now() - index * 120000).toISOString()
-      })),
-      audit: audit.slice(0, 15).map((entry) => ({
-        ts: entry.timestamp,
-        actor: entry.actorId,
-        action: entry.action,
-        target: `${entry.targetType}:${entry.targetId}`,
-        result: "logged"
-      })),
-      connectors: connectors.map((connector) => ({
-        connectorId: connector.connectorId,
-        scope: connector.name,
-        status: connector.health.status,
-        lastSync: connector.health.lastSuccessfulPollAt ?? new Date().toISOString()
-      })),
-      workflowCandidates: workflowCandidates.map((candidate) => ({
-        workflowId: candidate.workflowId,
-        title: candidate.title,
-        status: candidate.status,
-        impactLevel: candidate.impactLevel,
-        namespace: `tenant:${candidate.namespace.tenantId ?? "local"} / ${candidate.namespace.domain} / ${candidate.namespace.taskFamily}`,
-        confidenceScore: candidate.gateMetrics.confidenceScore,
-        utilityRate: candidate.gateMetrics.utilityRate,
-        overlapRate: candidate.gateMetrics.overlapRate,
-        contradictionRate: candidate.gateMetrics.contradictionRate,
-        staleUseRate: candidate.gateMetrics.staleUseRate,
-        conflictCount: candidate.conflictWithWorkflowIds.length,
-        updatedAt: candidate.updatedAt
-      })),
-      workflowReport,
-      workflowPolicy
+      ...emptyDashboardData,
+      connection: {
+        ...emptyDashboardData.connection,
+        health: {
+          status: "offline",
+          checks: [
+            {
+              id: "api",
+              label: "Local Core Connectivity",
+              status: "fail",
+              detail: error instanceof Error ? error.message : "Unable to reach local-core API."
+            }
+          ]
+        }
+      }
     };
-  } catch {
-    return mockData;
   }
+}
+
+export async function discoverOpenClawWorkspace(workspacePath: string): Promise<SetupState["discoveredSources"]> {
+  const response = await postJson<{ discovered: SetupState["discoveredSources"] }>("/setup/openclaw/discover", {
+    workspacePath
+  });
+  return response.discovered;
+}
+
+export async function connectOpenClawWorkspace(input: {
+  connectionMethod: "workspace_scan" | "manual_paths";
+  workspacePath: string;
+  grantWorkspaceAccess: boolean;
+  permissions: SetupState["permissions"];
+  sources: {
+    memoryPath?: string;
+    bootstrapPath?: string;
+    codexLogPaths: string[];
+    customJsonLogPaths: string[];
+    openClawLogPaths: string[];
+  };
+  runtime?: {
+    enabled: boolean;
+    mode: "hybrid" | "log_only" | "rpc_only";
+    endpoint?: string;
+    apiKey?: string;
+  };
+  pluginEnabled: Record<string, boolean>;
+}): Promise<void> {
+  await postJson("/setup/openclaw/connect", input as Record<string, unknown>);
+}
+
+export async function validateOpenClawSetup(): Promise<SetupState["health"]> {
+  return postJson<SetupState["health"]>("/setup/openclaw/validate", {});
+}
+
+export async function togglePlugin(pluginId: string, enabled: boolean): Promise<void> {
+  await postJson(`/plugins/${encodeURIComponent(pluginId)}/toggle`, { enabled });
+}
+
+export async function updateAlertStatus(
+  alertId: string,
+  status: "open" | "acknowledged" | "dismissed" | "resolved",
+  note?: string
+): Promise<void> {
+  await postJson(`/alerts/${encodeURIComponent(alertId)}/status`, {
+    status,
+    note
+  });
 }
 
 export async function approveWorkflowCandidate(workflowId: string, reason?: string): Promise<void> {
   await postJson(`/workflows/${encodeURIComponent(workflowId)}/review`, {
     approved: true,
-    actorId: operatorId(),
+    actorId: getOperatorId(),
     reason: reason ?? "Approved in Theia desktop governance view.",
     humanApprovalProvided: true
   });
@@ -182,7 +165,7 @@ export async function approveWorkflowCandidate(workflowId: string, reason?: stri
 export async function rejectWorkflowCandidate(workflowId: string, reason?: string): Promise<void> {
   await postJson(`/workflows/${encodeURIComponent(workflowId)}/review`, {
     approved: false,
-    actorId: operatorId(),
+    actorId: getOperatorId(),
     reason: reason ?? "Rejected in Theia desktop governance view.",
     humanApprovalProvided: true
   });
@@ -190,7 +173,7 @@ export async function rejectWorkflowCandidate(workflowId: string, reason?: strin
 
 export async function rollbackWorkflowCandidate(workflowId: string, reason: string): Promise<void> {
   await postJson(`/workflows/${encodeURIComponent(workflowId)}/rollback`, {
-    actorId: operatorId(),
+    actorId: getOperatorId(),
     reason
   });
 }
@@ -198,9 +181,8 @@ export async function rollbackWorkflowCandidate(workflowId: string, reason: stri
 export async function retireStaleWorkflowCandidates(maxAgeDays: number): Promise<number> {
   const retired = await postJson<Array<{ workflowId: string }>>("/workflows/retire-stale", {
     maxAgeDays,
-    actorId: operatorId()
+    actorId: getOperatorId()
   });
-
   return retired.length;
 }
 
@@ -208,11 +190,12 @@ export async function updateWorkflowPromotionPolicy(policy: DashboardData["workf
   const response = await fetch(`${coreBaseUrl()}/workflows/policy`, {
     method: "PUT",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      ...operatorHeaders()
     },
     body: JSON.stringify({
       ...policy,
-      actorId: operatorId()
+      actorId: getOperatorId()
     })
   });
 

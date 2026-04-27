@@ -3,9 +3,11 @@ import { TheiaEyeMark } from "./TheiaEyeMark";
 interface TopBarProps {
   workspaceName: string;
   timeRange: string;
+  connected: boolean;
+  generatedAt?: string;
 }
 
-export function TopBar({ workspaceName, timeRange }: TopBarProps) {
+export function TopBar({ workspaceName, timeRange, connected, generatedAt }: TopBarProps) {
   return (
     <header className="topbar">
       <div className="topbar-main">
@@ -17,11 +19,11 @@ export function TopBar({ workspaceName, timeRange }: TopBarProps) {
       </div>
       <div className="topbar-meta">
         <span className="pill">{timeRange}</span>
-        <span className="pill pill-live">Local-first mode</span>
+        <span className={connected ? "pill pill-live" : "pill"}>{connected ? "Connected" : "Not Connected"}</span>
       </div>
       <div className="topbar-status">
-        <span className="status-dot" />
-        <strong>Operator Focus</strong>
+        <span className={connected ? "status-dot" : "status-dot status-dot-offline"} />
+        <strong>{generatedAt ? `Synced ${new Date(generatedAt).toLocaleTimeString()}` : "Awaiting sync"}</strong>
       </div>
     </header>
   );

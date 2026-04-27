@@ -29,6 +29,11 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
   const [policyDraft, setPolicyDraft] = useState(data.workflowPolicy);
   const [feedback, setFeedback] = useState<{ level: "success" | "error"; message: string } | null>(null);
 
+  const canReview = data.operator.capabilities.includes("workflow:review");
+  const canRollback = data.operator.capabilities.includes("workflow:rollback");
+  const canRetire = data.operator.capabilities.includes("workflow:retire");
+  const canPolicyWrite = data.operator.capabilities.includes("workflow:policy:write");
+
   useEffect(() => {
     if (!isEditingPolicy) {
       setPolicyDraft(data.workflowPolicy);
@@ -76,6 +81,10 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
   }
 
   function handleApprove(workflowId: string) {
+    if (!canReview) {
+      setFeedback({ level: "error", message: "Current role cannot approve workflows." });
+      return;
+    }
     const note = window.prompt("Approval note (optional):", "Approved after governance review.");
     if (note === null) return;
 
@@ -88,6 +97,10 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
   }
 
   function handleReject(workflowId: string) {
+    if (!canReview) {
+      setFeedback({ level: "error", message: "Current role cannot reject workflows." });
+      return;
+    }
     const reason = window.prompt("Reason for rejection (recommended):", "Rejected due to insufficient evidence.");
     if (reason === null) return;
 
@@ -100,6 +113,10 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
   }
 
   function handleRollback(workflowId: string) {
+    if (!canRollback) {
+      setFeedback({ level: "error", message: "Current role cannot roll back workflows." });
+      return;
+    }
     const reason = window.prompt("Rollback reason (required):", "Regression observed after promotion.");
     if (reason === null) return;
     if (reason.trim().length === 0) {
@@ -116,6 +133,10 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
   }
 
   async function handleRetireStale() {
+    if (!canRetire) {
+      setFeedback({ level: "error", message: "Current role cannot retire stale workflows." });
+      return;
+    }
     const input = window.prompt("Retire workflows older than how many days?", "30");
     if (input === null) return;
 
@@ -184,6 +205,10 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
   }
 
   async function handleSavePolicy() {
+    if (!canPolicyWrite) {
+      setFeedback({ level: "error", message: "Current role cannot update workflow promotion policy." });
+      return;
+    }
     const validationError = validatePolicyDraft();
     if (validationError) {
       setFeedback({ level: "error", message: validationError });
@@ -231,7 +256,7 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
             {!isEditingPolicy ? (
               <button
                 className="action-btn neutral"
-                disabled={controlsDisabled}
+                disabled={controlsDisabled || !canPolicyWrite}
                 onClick={() => setIsEditingPolicy(true)}
                 type="button"
               >
@@ -241,7 +266,7 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
               <div className="action-group">
                 <button
                   className="action-btn primary"
-                  disabled={controlsDisabled}
+                  disabled={controlsDisabled || !canPolicyWrite}
                   onClick={() => void handleSavePolicy()}
                   type="button"
                 >
@@ -249,7 +274,7 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
                 </button>
                 <button
                   className="action-btn neutral"
-                  disabled={controlsDisabled}
+                  disabled={controlsDisabled || !canPolicyWrite}
                   onClick={() => {
                     setPolicyDraft(data.workflowPolicy);
                     setIsEditingPolicy(false);
@@ -261,6 +286,7 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
               </div>
             )}
           </div>
+          {!canPolicyWrite ? <p className="muted-note">Current role cannot edit workflow promotion policy.</p> : null}
 
           {!isEditingPolicy ? (
             <ul className="dense-list">
@@ -286,7 +312,7 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
                 <label className="field-row" key={row.key}>
                   <span>{row.label}</span>
                   <input
-                    disabled={controlsDisabled}
+                    disabled={controlsDisabled || !canPolicyWrite}
                     max={row.max}
                     min={row.min}
                     step={row.step}
@@ -306,7 +332,7 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
                 <span>Require human approval for high impact</span>
                 <input
                   checked={policyDraft.requireHumanApprovalForHighImpact}
-                  disabled={controlsDisabled}
+                  disabled={controlsDisabled || !canPolicyWrite}
                   type="checkbox"
                   onChange={(event) =>
                     setPolicyDraft((prev) => ({
@@ -323,10 +349,11 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
       <article className="panel">
         <div className="panel-header-row">
           <h3>Workflow Candidate Queue</h3>
-          <button className="action-btn neutral" disabled={controlsDisabled} onClick={handleRetireStale} type="button">
+          <button className="action-btn neutral" disabled={controlsDisabled || !canRetire} onClick={handleRetireStale} type="button">
             {isRetiring ? "Retiring..." : "Retire Stale"}
           </button>
         </div>
+        {!canRetire ? <p className="muted-note">Current role cannot retire stale workflows.</p> : null}
         {feedback ? <p className={feedback.level === "error" ? "feedback error" : "feedback success"}>{feedback.message}</p> : null}
         <table>
           <thead>
@@ -369,7 +396,7 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
                       <>
                         <button
                           className="action-btn primary"
-                          disabled={controlsDisabled}
+                          disabled={controlsDisabled || !canReview}
                           onClick={() => handleApprove(candidate.workflowId)}
                           type="button"
                         >
@@ -379,7 +406,7 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
                         </button>
                         <button
                           className="action-btn danger"
-                          disabled={controlsDisabled}
+                          disabled={controlsDisabled || !canReview}
                           onClick={() => handleReject(candidate.workflowId)}
                           type="button"
                         >
@@ -392,7 +419,7 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
                     {candidate.status === "promoted" ? (
                       <button
                         className="action-btn danger"
-                        disabled={controlsDisabled}
+                        disabled={controlsDisabled || !canRollback}
                         onClick={() => handleRollback(candidate.workflowId)}
                         type="button"
                       >

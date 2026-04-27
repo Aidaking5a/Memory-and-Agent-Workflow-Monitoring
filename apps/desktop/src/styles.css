@@ -184,6 +184,11 @@ nav {
   box-shadow: 0 0 8px rgba(63, 211, 155, 0.8);
 }
 
+.status-dot-offline {
+  background: var(--danger);
+  box-shadow: 0 0 8px rgba(255, 90, 95, 0.75);
+}
+
 .pill {
   background: #1b1b22;
   color: #e8e8ed;
@@ -515,6 +520,85 @@ tbody tr:hover {
   grid-template-columns: 1fr;
   gap: 0.4rem;
   margin-top: 0.6rem;
+}
+
+.onboarding-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.7rem;
+}
+
+.field-col {
+  display: grid;
+  gap: 0.3rem;
+  margin-top: 0.45rem;
+}
+
+.field-col span {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.field-col input,
+.field-col select,
+.field-col textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0f0f15;
+  color: var(--text);
+  padding: 0.42rem 0.5rem;
+  resize: vertical;
+}
+
+.field-check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.42rem;
+}
+
+.field-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+
+.sparkline-row {
+  margin-top: 0.6rem;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0.28rem;
+  align-items: end;
+  min-height: 140px;
+}
+
+.sparkline-col {
+  display: grid;
+  justify-items: center;
+  align-items: end;
+  gap: 0.18rem;
+}
+
+.sparkline-col small {
+  font-size: 0.65rem;
+  color: var(--muted);
+}
+
+.sparkline-bar {
+  width: 100%;
+  border-radius: 7px 7px 2px 2px;
+  border: 1px solid transparent;
+}
+
+.sparkline-bar.red {
+  background: linear-gradient(180deg, rgba(255, 46, 46, 0.94), rgba(255, 46, 46, 0.18));
+  border-color: rgba(255, 90, 95, 0.45);
+}
+
+.sparkline-bar.dark {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.65), rgba(255, 255, 255, 0.08));
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 .field-row {

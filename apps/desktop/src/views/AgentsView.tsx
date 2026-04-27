@@ -5,6 +5,7 @@ export function AgentsView({ data }: { data: DashboardData }) {
     <section className="view">
       <article className="panel">
         <h3>Agent Health</h3>
+        {data.agents.length === 0 ? <p className="muted-note">No agents observed yet. Connect workflow sources to start monitoring.</p> : null}
         <table>
           <thead>
             <tr>
@@ -12,8 +13,11 @@ export function AgentsView({ data }: { data: DashboardData }) {
               <th>Status</th>
               <th>Active Run</th>
               <th>Risk Score</th>
-              <th>Stale Memory</th>
+              <th>Workload</th>
+              <th>Token Burn (24h)</th>
+              <th>Memory Freshness</th>
               <th>Open Alerts</th>
+              <th>Objective</th>
             </tr>
           </thead>
           <tbody>
@@ -22,9 +26,12 @@ export function AgentsView({ data }: { data: DashboardData }) {
                 <td>{agent.name}</td>
                 <td>{agent.status}</td>
                 <td>{agent.activeRunId ?? "-"}</td>
-                <td>{agent.riskScore.toFixed(2)}</td>
-                <td>{agent.staleMemoryCount}</td>
+                <td>{Math.round(agent.riskScore * 100)}%</td>
+                <td>{Math.round(agent.workloadPressure * 100)}%</td>
+                <td>{agent.tokens24h.toLocaleString()}</td>
+                <td>{Math.round(agent.memoryFreshness * 100)}%</td>
                 <td>{agent.openAlerts}</td>
+                <td>{agent.currentObjective ?? "-"}</td>
               </tr>
             ))}
           </tbody>
