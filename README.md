@@ -125,6 +125,12 @@ Lead-related environment variables:
 
 This repo includes [`render.yaml`](./render.yaml) for deploying the control plane with HTTPS and a strict lead origin allowlist.
 
+Render notes:
+
+- Build uses `pnpm install --no-frozen-lockfile` (the lockfile is not required for deploys in this repo).
+- Ensure `THEIA_SESSION_SECRET` is present and at least 32 characters if you deploy manually outside the blueprint.
+- Marketing chart endpoint defaults to `GET /api/public/marketing/charts` with payload file `apps/control-plane/data/marketing-charts.json`.
+
 Default public form endpoint configured in [`website/site/contact.html`](./website/site/contact.html):
 
 - `https://theia-control-plane.onrender.com/api/public/leads`
