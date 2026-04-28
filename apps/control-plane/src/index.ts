@@ -5,6 +5,7 @@ import { Strategy as SamlStrategy } from "passport-saml";
 import type { Profile, VerifiedCallback } from "passport-saml";
 import path from "node:path";
 import crypto from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { LoginMetricsStore } from "./metrics-store.js";
 import { LeadsStore, type LeadStatus } from "./leads-store.js";
@@ -49,6 +50,23 @@ const leadAllowedOrigins = new Set(
     .filter(Boolean)
 );
 const leadIpHashSalt = process.env.THEIA_LEADS_IP_HASH_SALT?.trim();
+const marketingAllowedOrigins = new Set(
+  (process.env.THEIA_MARKETING_ALLOW_ORIGINS ??
+    "https://aidaking5a.github.io,http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+);
+const marketingMetricsFilePath = process.env.THEIA_MARKETING_METRICS_FILE?.trim()
+  ? path.resolve(process.cwd(), process.env.THEIA_MARKETING_METRICS_FILE.trim())
+  : path.resolve(__dirname, "../data/marketing-charts.json");
+
+interface MarketingChartsPayload {
+  sourceLabel?: string;
+  dataQuality?: "live" | "sample";
+  generatedAt?: string;
+  charts: Record<string, unknown>;
+}
 
 function resolveSessionSecret(): string {
   const configuredSecret = process.env.THEIA_SESSION_SECRET?.trim();
@@ -97,6 +115,35 @@ function applyLeadCors(request: Request, response: Response): void {
   }
   response.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+function applyMarketingCors(request: Request, response: Response): void {
+  const origin = resolveLeadOrigin(request);
+  if (origin && marketingAllowedOrigins.has(origin)) {
+    response.setHeader("Access-Control-Allow-Origin", origin);
+    response.setHeader("Vary", "Origin");
+  }
+  response.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+async function loadMarketingChartsPayload(): Promise<MarketingChartsPayload | null> {
+  try {
+    const raw = await readFile(marketingMetricsFilePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    if (!("charts" in parsed)) {
+      return null;
+    }
+    return parsed as MarketingChartsPayload;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
 }
 
 function getClientIp(request: Request): string | undefined {
@@ -323,6 +370,30 @@ app.get("/api/login-volume", async (request, response) => {
 app.get("/api/login-events", ensureApiAuthenticated, async (request, response) => {
   const limit = Number(request.query.limit ?? 25);
   response.json(await metricsStore.listRecent(limit));
+});
+
+app.options("/api/public/marketing/charts", (request, response) => {
+  applyMarketingCors(request, response);
+  response.sendStatus(204);
+});
+
+app.get("/api/public/marketing/charts", async (request, response) => {
+  applyMarketingCors(request, response);
+
+  const origin = resolveLeadOrigin(request);
+  if (origin && !marketingAllowedOrigins.has(origin)) {
+    response.status(403).json({ message: "Origin not allowed for marketing chart requests." });
+    return;
+  }
+
+  const payload = await loadMarketingChartsPayload();
+  if (!payload) {
+    response.status(404).json({ message: "Marketing chart payload not configured yet." });
+    return;
+  }
+
+  response.setHeader("Cache-Control", "public, max-age=120");
+  response.json(payload);
 });
 
 app.options("/api/public/leads", (request, response) => {

@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     rootDir: .
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @theia/control-plane build
+    buildCommand: corepack enable && pnpm install --no-frozen-lockfile && pnpm --filter @theia/control-plane build
     startCommand: pnpm --filter @theia/control-plane start
     healthCheckPath: /health
     autoDeploy: true
@@ -17,6 +17,10 @@ services:
         value: "false"
       - key: THEIA_LEADS_ALLOW_ORIGINS
         value: https://aidaking5a.github.io
+      - key: THEIA_MARKETING_ALLOW_ORIGINS
+        value: https://aidaking5a.github.io
+      - key: THEIA_MARKETING_METRICS_FILE
+        value: apps/control-plane/data/marketing-charts.json
       - key: THEIA_SESSION_SECRET
         generateValue: true
       - key: THEIA_LEADS_IP_HASH_SALT

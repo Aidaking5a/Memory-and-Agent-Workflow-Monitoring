@@ -7,6 +7,7 @@ Connectors provide explicit, permission-scoped ingestion from user-authorized ag
 Current prioritized connectors:
 - Codex CLI log connector
 - Custom JSON log connector
+- OpenClaw trace connector
 - Local file connector (`memory.md`, `bootstrap.md`)
 
 ## Required Interface

@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -161,6 +161,98 @@
         </div>
       </section>
 
+      <section
+        class="section chart-section"
+        id="outcomes"
+        data-chart-root
+        data-chart-api-base-url="https://theia-control-plane.onrender.com"
+      >
+        <div class="container">
+          <h2>Operational Outcomes Teams Care About</h2>
+          <p class="section-sub">
+            Larger trend views make it easier to trust what is improving. Theia can bind to a public control-plane
+            metrics endpoint when configured and otherwise falls back to clearly labeled design-partner sample data.
+          </p>
+          <div class="chart-toolbar">
+            <p class="chart-source" data-chart-source>
+              Source: Sample Data (anonymized 12-week design-partner baseline)
+            </p>
+            <div class="chart-window-controls" role="group" aria-label="Outcome trend time window">
+              <button type="button" data-chart-window="4">Last 4 Weeks</button>
+              <button type="button" data-chart-window="8" data-active="true">Last 8 Weeks</button>
+              <button type="button" data-chart-window="12">Last 12 Weeks</button>
+            </div>
+          </div>
+          <div class="chart-grid">
+            <article class="chart-card">
+              <div class="chart-header">
+                <div>
+                  <h3>Evidence Coverage And Policy Compliance</h3>
+                  <p class="chart-description">
+                    Evidence-linked conclusions and policy-passing workflows trend upward when operators review
+                    reasoning checkpoints early.
+                  </p>
+                </div>
+                <span class="chart-tag" data-chart-tag="coverage">Sample Data</span>
+              </div>
+              <div class="chart-legend" data-chart-legend="coverage"></div>
+              <div
+                class="chart-shell"
+                data-chart="coverage"
+                role="img"
+                aria-label="Trend chart for evidence coverage and policy compliance over time"
+              ></div>
+              <ul class="chart-note-list" data-chart-notes="coverage">
+                <li><strong>Week 5:</strong> Policy gate v2 introduced to reduce unsupported automation steps.</li>
+                <li><strong>Week 9:</strong> Memory freshness review increased evidence-linked conclusions.</li>
+              </ul>
+            </article>
+            <article class="chart-card">
+              <div class="chart-header">
+                <div>
+                  <h3>Reasoning Alerts By Severity</h3>
+                  <p class="chart-description">
+                    High-severity reasoning alerts decline as connector health and tool-result grounding improve.
+                  </p>
+                </div>
+                <span class="chart-tag" data-chart-tag="alerts">Sample Data</span>
+              </div>
+              <div class="chart-legend" data-chart-legend="alerts"></div>
+              <div
+                class="chart-shell"
+                data-chart="alerts"
+                role="img"
+                aria-label="Bar chart for weekly reasoning alert counts by severity"
+              ></div>
+              <ul class="chart-note-list" data-chart-notes="alerts">
+                <li><strong>Week 6:</strong> Tool-result grounding checks lowered high-severity alerts.</li>
+              </ul>
+            </article>
+          </div>
+          <div class="chart-summary-grid">
+            <article class="chart-summary" data-chart-summary="coverage">
+              <h3>Coverage Summary</h3>
+              <p class="chart-summary-meta">
+                Pre-rendered summary for search visibility and quick review before interactive scripts load.
+              </p>
+              <ul data-chart-summary-list>
+                <li>Evidence-linked conclusions increased from 79% to 91% across the latest 8-week window (+12 pts).</li>
+                <li>Policy-passing workflows increased from 68% to 86% (+18 pts).</li>
+              </ul>
+            </article>
+            <article class="chart-summary" data-chart-summary="alerts">
+              <h3>Alert Mix Summary</h3>
+              <p class="chart-summary-meta">
+                Severity mix indicates high-severity issues trend down as operator safeguards and tooling checks mature.
+              </p>
+              <ul data-chart-summary-list>
+                <li>High/Critical alerts dropped from 36 to 18 across the latest 8-week window (-50%).</li>
+                <li>Low/Info alerts rose from 27 to 40 as issues shifted toward lower-risk categories.</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
       <section class="section" id="capabilities">
         <div class="container">
           <h2>Built For High-Accountability Agent Operations</h2>
@@ -318,12 +410,13 @@
           <a href="mailto:support@theiaops.ai">Support</a>
         </div>
       </div>
-      <div class="container footer-note">� <span data-current-year></span> Theia. All rights reserved.</div>
+      <div class="container footer-note">© <span data-current-year></span> Theia. All rights reserved.</div>
     </footer>
 
     <script src="assets/app.js" defer></script>
   </body>
 </html>
+
 
 
 

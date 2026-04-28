@@ -5,6 +5,9 @@ export function CompareView({ data }: { data: DashboardData }) {
     <section className="view">
       <article className="panel">
         <h3>Agent Comparison</h3>
+        {data.comparison.length === 0 ? (
+          <p className="muted-note">Comparison requires at least two active/observed agents.</p>
+        ) : null}
         <table>
           <thead>
             <tr>

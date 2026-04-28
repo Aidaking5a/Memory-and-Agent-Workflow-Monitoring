@@ -10,11 +10,17 @@
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "dev:desktop": "pnpm --filter @theia/desktop dev",
+    "dev:desktop:tauri": "pnpm --filter @theia/desktop tauri:dev",
     "dev:core": "pnpm --filter @theia/local-core dev",
     "dev:control-plane": "pnpm --filter @theia/control-plane dev",
+    "build:desktop:installer": "pnpm --filter @theia/desktop tauri:build",
+    "build:desktop:installer:win": "pnpm --filter @theia/desktop tauri:build:win",
+    "build:desktop:installer:mac": "pnpm --filter @theia/desktop tauri:build:mac",
     "setup:local": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/configure-theia-local-env.ps1",
     "dev:stack": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-theia-dev.ps1",
-    "dev:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/stop-theia-dev.ps1"
+    "dev:stack:force-port": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-theia-dev.ps1 -ForceDesktopPort",
+    "dev:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/stop-theia-dev.ps1",
+    "domain:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/prepare-custom-domain.ps1"
   },
   "devDependencies": {
     "@types/node": "24.3.0",

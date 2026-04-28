@@ -14,6 +14,7 @@ function baseSnapshot(): RunSnapshot {
     },
     tasks: [],
     memoryVersions: [],
+    workflowCandidates: [],
     events: [
       {
         eventId: "evt_1",
@@ -46,5 +47,45 @@ describe("evaluateRun", () => {
     const alerts = evaluateRun(baseSnapshot());
     expect(alerts.some((alert) => alert.category === "unsupported_assumption")).toBe(true);
     expect(alerts.some((alert) => alert.category === "overconfidence_without_verification")).toBe(true);
+  });
+
+  it("raises workflow hardening alerts for context mismatch and promotion failures", () => {
+    const snapshot = baseSnapshot();
+    snapshot.events.push(
+      {
+        eventId: "evt_3",
+        workspaceId: "ws_1",
+        agentId: "agent_1",
+        runId: "run_1",
+        eventType: "workflow.derived_decision",
+        timestamp: "2026-01-01T00:03:00Z",
+        payload: {
+          workflowTitle: "Legacy browser checkout workflow",
+          workflowObjective: "Checkout flow for ecommerce web session",
+          contextShiftScore: 0.81,
+          domainChanged: true
+        },
+        source: { connectorId: "local" },
+        evidenceRefs: []
+      },
+      {
+        eventId: "evt_4",
+        workspaceId: "ws_1",
+        agentId: "agent_1",
+        runId: "run_1",
+        eventType: "workflow.rejected",
+        timestamp: "2026-01-01T00:04:00Z",
+        payload: {
+          workflowId: "wf_1",
+          gateFailures: ["min_confidence", "min_tool_grounding"]
+        },
+        source: { connectorId: "local" },
+        evidenceRefs: []
+      }
+    );
+
+    const alerts = evaluateRun(snapshot);
+    expect(alerts.some((alert) => alert.category === "workflow_context_mismatch")).toBe(true);
+    expect(alerts.some((alert) => alert.category === "workflow_promotion_gate_failed")).toBe(true);
   });
 });

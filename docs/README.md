@@ -23,5 +23,8 @@ This repository implements sections 1-13 of the Theia strategy and architecture 
 17. [Public Lead Intake Deploy](./public-lead-intake-deploy.md)
 18. [Backlink Outreach Kit](./backlink-outreach-kit.md)
 19. [Keycloak SAML Quickstart](./keycloak-saml-quickstart.md)
+20. [AWM Hardening Implementation](./awm-hardening-implementation.md)
+21. [Downloadable App Integration Plan](./downloadable-app-integration-plan.md)
+22. [Domain Acquisition and Cutover Plan](./domain-acquisition-and-cutover-plan.md)
 
-> Sections 14 and 15 were intentionally omitted per user request.
+> The original strategy response excluded sections 14 and 15 at first. This repository now includes additional implementation and operations docs requested afterward.

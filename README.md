@@ -30,6 +30,8 @@ Theia is a premium, consent-based memory and agent workflow orchestration platfo
 pnpm install
 ```
 
+If PowerShell execution policy blocks `pnpm`, use `pnpm.cmd` instead (for example `pnpm.cmd install`).
+
 2. Build all packages/apps:
 
 ```bash
@@ -54,6 +56,59 @@ pnpm --filter @theia/control-plane dev
 pnpm --filter @theia/desktop dev
 ```
 
+Desktop URL: `http://localhost:5173` (fixed dev port).
+
+## Desktop Installer Packaging (.exe/.dmg)
+
+The desktop app is now scaffolded for native installers with Tauri.
+
+Prerequisites:
+
+- Node 22 + pnpm
+- Rust toolchain (`rustup`) for local builds
+
+Run native desktop shell (Theia desktop in a Tauri window):
+
+```bash
+pnpm run dev:desktop:tauri
+```
+
+Build installers locally:
+
+```bash
+# Windows (NSIS .exe) on Windows
+pnpm run build:desktop:installer:win
+
+# macOS (.dmg) on macOS
+pnpm run build:desktop:installer:mac
+```
+
+Output locations:
+
+- Windows: `apps/desktop/src-tauri/target/release/bundle/nsis/*.exe`
+- macOS: `apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg`
+
+CI packaging workflow:
+
+- `.github/workflows/desktop-installers.yml`
+- Trigger manually in GitHub Actions (`Run workflow`) or by pushing a `v*` tag.
+- Artifacts are uploaded as:
+  - `theia-windows-installer`
+  - `theia-macos-installer`
+
+Note: installers are unsigned by default in this repo. For public distribution trust, add code-signing certificates and (for macOS) notarization.
+
+Workflow governance APIs (local core):
+
+- `POST /runs/:runId/workflows/derive`
+- `GET /workflows`
+- `GET /workflows/queue/pending`
+- `POST /workflows/:workflowId/review`
+- `POST /workflows/:workflowId/rollback`
+- `POST /workflows/retire-stale`
+- `GET /workflows/release-gates/report`
+- `GET /workflows/policy`
+
 ## One-Command Local Startup (Windows)
 
 Run once (persistent env + strong session secret for your Windows user):
@@ -66,6 +121,12 @@ Daily startup (Keycloak + local core + control plane + desktop):
 
 ```powershell
 pnpm run dev:stack
+```
+
+If another process is blocking `localhost:5173`, reclaim it automatically for Theia desktop:
+
+```powershell
+pnpm run dev:stack:force-port
 ```
 
 You can also double-click:
@@ -104,6 +165,12 @@ Lead-related environment variables:
 
 This repo includes [`render.yaml`](./render.yaml) for deploying the control plane with HTTPS and a strict lead origin allowlist.
 
+Render notes:
+
+- Build uses `pnpm install --no-frozen-lockfile` (the lockfile is not required for deploys in this repo).
+- Ensure `THEIA_SESSION_SECRET` is present and at least 32 characters if you deploy manually outside the blueprint.
+- Marketing chart endpoint defaults to `GET /api/public/marketing/charts` with payload file `apps/control-plane/data/marketing-charts.json`.
+
 Default public form endpoint configured in [`website/site/contact.html`](./website/site/contact.html):
 
 - `https://theia-control-plane.onrender.com/api/public/leads`
@@ -141,11 +208,25 @@ Search visibility operations:
 
 - `docs/google-indexing-checklist.md`
 - `docs/seo-visibility-playbook.md`
+- `docs/domain-acquisition-and-cutover-plan.md`
+
+AWM hardening and integrated-app planning:
+
+- `docs/awm-hardening-implementation.md`
+- `docs/downloadable-app-integration-plan.md`
+- `docs/desktop-installer-playbook.md`
+
+Domain cutover helper:
+
+```powershell
+.\scripts\prepare-custom-domain.ps1 -PrimaryDomain "www.yourdomain.com" -Apply
+```
 
 ## Connector Priorities Implemented
 
 - `Codex CLI logs` via `CodexCliConnector`
 - `Custom JSON logs` via `CustomJsonConnector`
+- `OpenClaw traces` via `OpenClawConnector`
 - Existing `memory.md` / `bootstrap.md` ingestion via `LocalFileConnector`
 
 Local core environment variables:
@@ -153,6 +234,7 @@ Local core environment variables:
 - `THEIA_FILE_SOURCES=memory.md,bootstrap.md`
 - `THEIA_CODEX_LOG_SOURCES=/path/to/codex.log`
 - `THEIA_CUSTOM_JSON_SOURCES=/path/to/events.json`
+- `THEIA_OPENCLAW_LOG_SOURCES=/path/to/openclaw.jsonl`
 - `THEIA_APPROVED_PATHS=/approved/path/one,/approved/path/two`
 
 ## SAML Setup (Free-Provider Friendly)
