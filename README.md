@@ -58,6 +58,46 @@ pnpm --filter @theia/desktop dev
 
 Desktop URL: `http://localhost:5173` (fixed dev port).
 
+## Desktop Installer Packaging (.exe/.dmg)
+
+The desktop app is now scaffolded for native installers with Tauri.
+
+Prerequisites:
+
+- Node 22 + pnpm
+- Rust toolchain (`rustup`) for local builds
+
+Run native desktop shell (Theia desktop in a Tauri window):
+
+```bash
+pnpm run dev:desktop:tauri
+```
+
+Build installers locally:
+
+```bash
+# Windows (NSIS .exe) on Windows
+pnpm run build:desktop:installer:win
+
+# macOS (.dmg) on macOS
+pnpm run build:desktop:installer:mac
+```
+
+Output locations:
+
+- Windows: `apps/desktop/src-tauri/target/release/bundle/nsis/*.exe`
+- macOS: `apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg`
+
+CI packaging workflow:
+
+- `.github/workflows/desktop-installers.yml`
+- Trigger manually in GitHub Actions (`Run workflow`) or by pushing a `v*` tag.
+- Artifacts are uploaded as:
+  - `theia-windows-installer`
+  - `theia-macos-installer`
+
+Note: installers are unsigned by default in this repo. For public distribution trust, add code-signing certificates and (for macOS) notarization.
+
 Workflow governance APIs (local core):
 
 - `POST /runs/:runId/workflows/derive`
@@ -174,6 +214,7 @@ AWM hardening and integrated-app planning:
 
 - `docs/awm-hardening-implementation.md`
 - `docs/downloadable-app-integration-plan.md`
+- `docs/desktop-installer-playbook.md`
 
 Domain cutover helper:
 

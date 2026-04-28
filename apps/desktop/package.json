@@ -9,14 +9,21 @@
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests",
     "lint": "echo 'No lint configured for @theia/desktop'",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:win": "tauri build --bundles nsis",
+    "tauri:build:mac": "tauri build --bundles dmg"
   },
   "dependencies": {
+    "@tauri-apps/api": "2.8.0",
     "@theia/event-schema": "workspace:*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "2.10.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
