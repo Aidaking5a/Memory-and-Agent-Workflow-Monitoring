@@ -66,6 +66,7 @@ Prerequisites:
 
 - Node 22 + pnpm
 - Rust toolchain (`rustup`) for local builds
+- Visual Studio Build Tools 2022 with C++ workload (Windows only)
 
 Run native desktop shell (Theia desktop in a Tauri window):
 
@@ -82,6 +83,16 @@ pnpm run build:desktop:installer:win
 # macOS (.dmg) on macOS
 pnpm run build:desktop:installer:mac
 ```
+
+If Windows Build Tools are not installed yet, use:
+
+```powershell
+pnpm run build:desktop:installer:win:auto-setup
+```
+
+Or double-click:
+
+- `scripts/build-desktop-installer-win.cmd`
 
 Output locations:
 

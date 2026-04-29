@@ -16,6 +16,14 @@ pnpm install
 pnpm run build:desktop:installer:win
 ```
 
+If `link.exe` is missing, run auto-setup:
+
+```powershell
+pnpm run build:desktop:installer:win:auto-setup
+```
+
+The auto-setup flow installs Visual Studio Build Tools 2022 with C++ tools and reloads the MSVC environment for the build.
+
 macOS host:
 
 ```bash
@@ -27,6 +35,17 @@ Generated files:
 
 - `apps/desktop/src-tauri/target/release/bundle/nsis/*.exe`
 - `apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg`
+
+## Windows Prerequisites
+
+- Rust toolchain (`rustup`)
+- Visual Studio Build Tools 2022 with `Microsoft.VisualStudio.Workload.VCTools`
+
+If you prefer manual install:
+
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e --source winget --accept-package-agreements --accept-source-agreements --override "--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
 
 ## GitHub Actions Build
 

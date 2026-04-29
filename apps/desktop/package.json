@@ -17,7 +17,7 @@
     "tauri:build:mac": "tauri build --bundles dmg"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.8.0",
+    "@tauri-apps/api": "2.10.1",
     "@theia/event-schema": "workspace:*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
