@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-  [switch]$InstallBuildTools
+  [switch]$InstallBuildTools,
+  [switch]$InstallOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -92,21 +93,39 @@ function Test-IsAdmin {
   return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Invoke-ElevatedBuildToolsInstall {
+  Write-Host "Requesting Administrator approval (UAC) to install Visual Studio Build Tools..."
+  try {
+    $proc = Start-Process -FilePath "powershell.exe" `
+      -Verb RunAs `
+      -ArgumentList @(
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        $PSCommandPath,
+        "-InstallBuildTools",
+        "-InstallOnly"
+      ) `
+      -Wait `
+      -PassThru
+  } catch {
+    throw "Administrator approval was not granted. Cannot install Build Tools without elevation."
+  }
+
+  if ($proc.ExitCode -ne 0) {
+    throw "Elevated Build Tools installer failed with exit code $($proc.ExitCode)."
+  }
+}
+
 function Install-BuildTools {
   if (-not (Get-Command "winget" -ErrorAction SilentlyContinue)) {
     throw "winget is not available. Install Visual Studio Build Tools manually."
   }
 
   if (-not (Test-IsAdmin)) {
-    throw @"
-Visual Studio Build Tools installation requires an Administrator PowerShell window.
-
-Run this once in an elevated PowerShell:
-winget install --id Microsoft.VisualStudio.2022.BuildTools -e --source winget --accept-package-agreements --accept-source-agreements --override "--passive --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --includeRecommended"
-
-Then open a new terminal and run:
-pnpm run build:desktop:installer:win
-"@
+    Invoke-ElevatedBuildToolsInstall
+    return
   }
 
   Write-Host "Installing Visual Studio Build Tools (C++ workload). This may take several minutes..."
@@ -117,7 +136,6 @@ pnpm run build:desktop:installer:win
 }
 
 Write-Host "Preparing Windows toolchain for Theia desktop installer..."
-$pnpmCommand = Get-PnpmCommand
 
 if (-not (Wait-VisualStudioInstaller -TimeoutMinutes 45)) {
   throw "Visual Studio installer is still running after 45 minutes. Complete/close it, then rerun this command."
@@ -148,6 +166,11 @@ if (-not (Test-LinkExe) -and $InstallBuildTools) {
   }
 }
 
+if ($InstallOnly) {
+  Write-Host "Build Tools install-only mode complete."
+  exit 0
+}
+
 if (-not (Test-LinkExe)) {
   throw @"
 MSVC linker link.exe is not available.
@@ -158,10 +181,11 @@ Fix:
 2) Open a NEW terminal and run:
    pnpm run build:desktop:installer:win
 
-Tip: rerun this command in an Administrator PowerShell and the script will auto-attempt install.
+Tip: if you cancel the UAC prompt, rerun this command and allow elevation, or install manually in an Administrator shell.
 "@
 }
 
+$pnpmCommand = Get-PnpmCommand
 $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 $env:NODE_OPTIONS = "--max-old-space-size=4096"
 

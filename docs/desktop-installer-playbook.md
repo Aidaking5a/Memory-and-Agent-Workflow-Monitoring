@@ -16,7 +16,7 @@ pnpm install
 pnpm run build:desktop:installer:win
 ```
 
-If `link.exe` is missing, this command attempts Build Tools installation automatically. If needed, rerun from an Administrator PowerShell.
+If `link.exe` is missing, this command attempts Build Tools installation automatically and triggers a UAC elevation prompt.
 
 Explicit setup command:
 
