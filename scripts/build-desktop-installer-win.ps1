@@ -95,18 +95,14 @@ function Test-IsAdmin {
 
 function Invoke-ElevatedBuildToolsInstall {
   Write-Host "Requesting Administrator approval (UAC) to install Visual Studio Build Tools..."
+  $quotedScriptPath = '"' + $PSCommandPath + '"'
+  $elevatedScript = "& $quotedScriptPath -InstallBuildTools -InstallOnly"
+  $encodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($elevatedScript))
+
   try {
     $proc = Start-Process -FilePath "powershell.exe" `
       -Verb RunAs `
-      -ArgumentList @(
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        $PSCommandPath,
-        "-InstallBuildTools",
-        "-InstallOnly"
-      ) `
+      -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand" `
       -Wait `
       -PassThru
   } catch {
