@@ -93,6 +93,17 @@ function Test-IsAdmin {
   return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-LatestVsInstallLogs {
+  param(
+    [int]$Count = 6
+  )
+
+  Get-ChildItem -Path $env:TEMP -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like "dd_*.log" -or $_.Name -like "vs*.log" } |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First $Count -ExpandProperty FullName
+}
+
 function Invoke-ElevatedBuildToolsInstall {
   Write-Host "Requesting Administrator approval (UAC) to install Visual Studio Build Tools..."
   $quotedScriptPath = '"' + $PSCommandPath + '"'
@@ -114,21 +125,57 @@ function Invoke-ElevatedBuildToolsInstall {
   }
 }
 
-function Install-BuildTools {
-  if (-not (Get-Command "winget" -ErrorAction SilentlyContinue)) {
-    throw "winget is not available. Install Visual Studio Build Tools manually."
+function Install-BuildToolsViaBootstrapper {
+  $bootstrapperUrl = "https://aka.ms/vs/17/release/vs_BuildTools.exe"
+  $bootstrapperPath = Join-Path $env:TEMP "vs_BuildTools.exe"
+  $defaultInstallPath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools"
+
+  Write-Host "Downloading Visual Studio Build Tools bootstrapper..."
+  Invoke-WebRequest -Uri $bootstrapperUrl -OutFile $bootstrapperPath
+
+  $arguments = @(
+    "--passive"
+    "--wait"
+    "--norestart"
+    "--nocache"
+    "--installPath"
+    """$defaultInstallPath"""
+    "--add"
+    "Microsoft.VisualStudio.Workload.VCTools"
+    "--add"
+    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+    "--includeRecommended"
+  )
+
+  Write-Host "Installing Visual Studio Build Tools (C++ workload). This may take several minutes..."
+  $proc = Start-Process -FilePath $bootstrapperPath -ArgumentList $arguments -Wait -PassThru
+  if ($proc.ExitCode -eq 0) {
+    return
   }
 
+  if ($proc.ExitCode -eq 3010) {
+    Write-Warning "Build Tools installation completed with reboot required (3010). A restart may be needed before build succeeds."
+    return
+  }
+
+  $recentLogs = Get-LatestVsInstallLogs
+  if ($recentLogs -and $recentLogs.Count -gt 0) {
+    Write-Host "Recent Visual Studio installer logs:"
+    foreach ($logPath in $recentLogs) {
+      Write-Host " - $logPath"
+    }
+  }
+
+  throw "Build Tools bootstrapper failed with exit code $($proc.ExitCode)."
+}
+
+function Install-BuildTools {
   if (-not (Test-IsAdmin)) {
     Invoke-ElevatedBuildToolsInstall
     return
   }
 
-  Write-Host "Installing Visual Studio Build Tools (C++ workload). This may take several minutes..."
-  & winget install --id Microsoft.VisualStudio.2022.BuildTools -e --source winget --accept-package-agreements --accept-source-agreements --override "--passive --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --includeRecommended"
-  if ($LASTEXITCODE -ne 0) {
-    throw "Build Tools installation failed. Please install Visual Studio Build Tools manually and rerun this script."
-  }
+  Install-BuildToolsViaBootstrapper
 }
 
 Write-Host "Preparing Windows toolchain for Theia desktop installer..."
@@ -173,7 +220,8 @@ MSVC linker link.exe is not available.
 
 Fix:
 1) Install Visual Studio Build Tools 2022 with C++ tools:
-   winget install --id Microsoft.VisualStudio.2022.BuildTools -e --source winget --accept-package-agreements --accept-source-agreements --override "--passive --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --includeRecommended"
+   https://aka.ms/vs/17/release/vs_BuildTools.exe
+   (add workload: Microsoft.VisualStudio.Workload.VCTools + component: Microsoft.VisualStudio.Component.VC.Tools.x86.x64)
 2) Open a NEW terminal and run:
    pnpm run build:desktop:installer:win
 

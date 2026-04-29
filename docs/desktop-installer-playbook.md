@@ -47,7 +47,8 @@ Generated files:
 If you prefer manual install:
 
 ```powershell
-winget install --id Microsoft.VisualStudio.2022.BuildTools -e --source winget --accept-package-agreements --accept-source-agreements --override "--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_BuildTools.exe" -OutFile "$env:TEMP\vs_BuildTools.exe"
+Start-Process "$env:TEMP\vs_BuildTools.exe" -ArgumentList @("--passive","--wait","--norestart","--nocache","--add","Microsoft.VisualStudio.Workload.VCTools","--add","Microsoft.VisualStudio.Component.VC.Tools.x86.x64","--includeRecommended") -Wait -PassThru
 ```
 
 ## GitHub Actions Build

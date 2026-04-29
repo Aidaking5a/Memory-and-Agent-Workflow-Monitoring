@@ -92,6 +92,10 @@ If you want an explicit setup command first, use:
 pnpm run build:desktop:installer:win:auto-setup
 ```
 
+Manual fallback installer download:
+
+- `https://aka.ms/vs/17/release/vs_BuildTools.exe`
+
 Or double-click:
 
 - `scripts/build-desktop-installer-win.cmd`
