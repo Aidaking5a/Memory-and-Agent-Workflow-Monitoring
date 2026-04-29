@@ -16,7 +16,9 @@ pnpm install
 pnpm run build:desktop:installer:win
 ```
 
-If `link.exe` is missing, run auto-setup:
+If `link.exe` is missing, this command attempts Build Tools installation automatically. If needed, rerun from an Administrator PowerShell.
+
+Explicit setup command:
 
 ```powershell
 pnpm run build:desktop:installer:win:auto-setup
@@ -40,6 +42,7 @@ Generated files:
 
 - Rust toolchain (`rustup`)
 - Visual Studio Build Tools 2022 with `Microsoft.VisualStudio.Workload.VCTools`
+- PowerShell launched as Administrator when installing Build Tools
 
 If you prefer manual install:
 

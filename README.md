@@ -84,7 +84,9 @@ pnpm run build:desktop:installer:win
 pnpm run build:desktop:installer:mac
 ```
 
-If Windows Build Tools are not installed yet, use:
+Windows note: if MSVC Build Tools are missing, `build:desktop:installer:win` now attempts to install them automatically. If your shell is not elevated, rerun the same command from an Administrator PowerShell.
+
+If you want an explicit setup command first, use:
 
 ```powershell
 pnpm run build:desktop:installer:win:auto-setup
