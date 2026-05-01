@@ -185,6 +185,7 @@ export const emptyDashboardData: DashboardData = {
     gatewayCommand: "openclaw gateway --port 18789",
     dashboardCommand: "openclaw dashboard",
     statusCommand: "openclaw gateway status",
+    restartCommand: "openclaw gateway start",
     runtime: {
       enabled: false,
       mode: "hybrid",
@@ -199,7 +200,14 @@ export const emptyDashboardData: DashboardData = {
       missing: [],
       directories: []
     },
-    operations: {},
+    operations: {
+      emergencyState: {
+        status: "ready",
+        isStopped: false,
+        stopping: false,
+        restartAvailable: false
+      }
+    },
     recentActivity: [],
     reconnectHints: [
       "Run openclaw gateway --port 18789 and confirm with openclaw gateway status.",

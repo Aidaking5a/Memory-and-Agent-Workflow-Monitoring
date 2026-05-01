@@ -817,6 +817,10 @@ export class TheiaCore {
     return this.policy.getAuditTrail();
   }
 
+  public addOperationalAudit(action: string, actorId: string, targetId: string, metadata: Record<string, unknown> = {}): void {
+    this.appendSystemAudit(action, actorId, targetId, metadata);
+  }
+
   public listRuns(): Run[] {
     return [...this.runs];
   }

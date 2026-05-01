@@ -304,6 +304,33 @@ export interface OperatorContext {
   role: OperatorRole;
   actorId: string;
   capabilities: OperatorCapability[];
+  userId?: string;
+  sessionId?: string;
+}
+
+export interface AuthSessionUser {
+  userId: string;
+  email: string;
+  role: "owner" | "member";
+}
+
+export interface AuthSessionPayload {
+  token: string;
+  expiresAt: string;
+  user: AuthSessionUser;
+}
+
+export interface EmergencySafetyState {
+  status: "ready" | "stopping" | "stopped" | "failed" | string;
+  isStopped: boolean;
+  stopping: boolean;
+  restartAvailable: boolean;
+  triggeredBy?: string;
+  reason?: string;
+  lastRequestedAt?: string;
+  lastUpdatedAt?: string;
+  lastResult?: string;
+  lastError?: string;
 }
 
 export interface RunSummary {
@@ -425,6 +452,7 @@ export interface OpenClawLiveView {
   gatewayCommand: string;
   dashboardCommand: string;
   statusCommand: string;
+  restartCommand?: string;
   currentAgentId?: string;
   currentRunId?: string;
   currentTask?: string;
@@ -452,6 +480,7 @@ export interface OpenClawLiveView {
     status?: Record<string, unknown>;
     health?: Record<string, unknown>;
     recentLogMeta?: Record<string, unknown>;
+    emergencyState?: EmergencySafetyState;
   };
   recentActivity: OpenClawLiveActivity[];
   reconnectHints: string[];

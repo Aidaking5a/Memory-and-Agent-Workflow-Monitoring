@@ -1,9 +1,11 @@
 import { emptyDashboardData } from "./mock-data";
-import type { DashboardData, OperatorRole, SetupState } from "./types";
+import type { AuthSessionPayload, DashboardData, OperatorRole, SetupState } from "./types";
 
 const DEFAULT_BASE_URL = "http://localhost:4318";
 const OPERATOR_ROLE_STORAGE_KEY = "theia.operator.role";
 const OPERATOR_ID_STORAGE_KEY = "theia.operator.id";
+const AUTH_TOKEN_STORAGE_KEY = "theia.auth.token";
+const AUTH_USER_STORAGE_KEY = "theia.auth.user";
 
 function coreBaseUrl(): string {
   return import.meta.env.VITE_THEIA_CORE_URL ?? DEFAULT_BASE_URL;
@@ -39,10 +41,69 @@ export function setOperatorId(value: string): void {
 }
 
 function operatorHeaders(): Record<string, string> {
-  return {
+  const headers: Record<string, string> = {
     "x-theia-operator-role": getOperatorRole(),
     "x-theia-operator-id": getOperatorId()
   };
+  const token = getAuthToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+export class ApiAuthError extends Error {
+  public readonly statusCode: number;
+
+  public constructor(message: string, statusCode = 401) {
+    super(message);
+    this.name = "ApiAuthError";
+    this.statusCode = statusCode;
+  }
+}
+
+export function getAuthToken(): string | null {
+  return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+}
+
+export function getAuthUserEmail(): string | null {
+  try {
+    const raw = window.localStorage.getItem(AUTH_USER_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { email?: string };
+    return typeof parsed?.email === "string" ? parsed.email : null;
+  } catch {
+    return null;
+  }
+}
+
+function setAuthSession(session: AuthSessionPayload): void {
+  window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, session.token);
+  window.localStorage.setItem(AUTH_USER_STORAGE_KEY, JSON.stringify(session.user));
+  setOperatorId(session.user.email);
+  setOperatorRole(session.user.role === "owner" ? "owner" : "operator");
+}
+
+export function clearAuthSession(): void {
+  window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+  window.localStorage.removeItem(AUTH_USER_STORAGE_KEY);
+}
+
+function isAuthStatus(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
+async function getJson<TResponse>(path: string): Promise<TResponse> {
+  const response = await fetch(`${coreBaseUrl()}${path}`, {
+    headers: operatorHeaders()
+  });
+  if (isAuthStatus(response.status)) {
+    throw new ApiAuthError(await readErrorMessage(response), response.status);
+  }
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as TResponse;
 }
 
 async function readErrorMessage(response: Response): Promise<string> {
@@ -67,6 +128,9 @@ async function postJson<TResponse>(path: string, body: Record<string, unknown>):
     body: JSON.stringify(body)
   });
 
+  if (isAuthStatus(response.status)) {
+    throw new ApiAuthError(await readErrorMessage(response), response.status);
+  }
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));
   }
@@ -84,6 +148,9 @@ async function putJson<TResponse>(path: string, body: Record<string, unknown>): 
     body: JSON.stringify(body)
   });
 
+  if (isAuthStatus(response.status)) {
+    throw new ApiAuthError(await readErrorMessage(response), response.status);
+  }
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));
   }
@@ -93,13 +160,7 @@ async function putJson<TResponse>(path: string, body: Record<string, unknown>): 
 
 export async function loadDashboardData(): Promise<DashboardData> {
   try {
-    const response = await fetch(`${coreBaseUrl()}/dashboard/snapshot`, {
-      headers: operatorHeaders()
-    });
-    if (!response.ok) {
-      throw new Error(await readErrorMessage(response));
-    }
-    const payload = (await response.json()) as Partial<DashboardData>;
+    const payload = await getJson<Partial<DashboardData>>("/dashboard/snapshot");
     const connection = (payload.connection ?? {}) as Partial<DashboardData["connection"]>;
     const openClawLive = (payload.openClawLive ?? {}) as Partial<DashboardData["openClawLive"]>;
     return {
@@ -145,6 +206,9 @@ export async function loadDashboardData(): Promise<DashboardData> {
       notificationCenter: payload.notificationCenter ?? emptyDashboardData.notificationCenter
     };
   } catch (error) {
+    if (error instanceof ApiAuthError) {
+      throw error;
+    }
     return {
       ...emptyDashboardData,
       connection: {
@@ -268,19 +332,59 @@ export async function retireStaleWorkflowCandidates(maxAgeDays: number): Promise
 }
 
 export async function updateWorkflowPromotionPolicy(policy: DashboardData["workflowPolicy"]): Promise<void> {
-  const response = await fetch(`${coreBaseUrl()}/workflows/policy`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      ...operatorHeaders()
-    },
-    body: JSON.stringify({
-      ...policy,
-      actorId: getOperatorId()
-    })
+  await putJson("/workflows/policy", {
+    ...policy,
+    actorId: getOperatorId()
   });
+}
 
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
+export async function signupLocalAccount(email: string, password: string): Promise<AuthSessionPayload> {
+  const session = await postJson<AuthSessionPayload>("/auth/signup", {
+    email,
+    password
+  });
+  setAuthSession(session);
+  return session;
+}
+
+export async function signinLocalAccount(email: string, password: string): Promise<AuthSessionPayload> {
+  const session = await postJson<AuthSessionPayload>("/auth/signin", {
+    email,
+    password
+  });
+  setAuthSession(session);
+  return session;
+}
+
+export async function loadAuthProfile(): Promise<{ authenticated: boolean; user?: AuthSessionPayload["user"] }> {
+  try {
+    const result = await getJson<{ authenticated: boolean; user?: AuthSessionPayload["user"] }>("/auth/me");
+    return result;
+  } catch (error) {
+    if (error instanceof ApiAuthError) {
+      clearAuthSession();
+      return { authenticated: false };
+    }
+    throw error;
   }
+}
+
+export async function logoutLocalAccount(): Promise<void> {
+  try {
+    await postJson("/auth/logout", {});
+  } finally {
+    clearAuthSession();
+  }
+}
+
+export async function triggerEmergencyStop(reason: string): Promise<void> {
+  await postJson("/openclaw/emergency-stop", {
+    reason
+  });
+}
+
+export async function restartGateway(resumeAutomation = true): Promise<void> {
+  await postJson("/openclaw/restart-gateway", {
+    resumeAutomation
+  });
 }

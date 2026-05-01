@@ -196,6 +196,7 @@ h1 {
   font-weight: 700;
   border: 1px solid transparent;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  min-height: 44px;
 }
 
 .button:hover {
@@ -212,6 +213,12 @@ h1 {
   border-color: var(--line);
   color: var(--text);
   background: rgba(21, 11, 11, 0.9);
+}
+
+.button.ghost {
+  border-color: var(--line-soft);
+  color: #f6e8e8;
+  background: transparent;
 }
 
 .hero-panel {
@@ -393,6 +400,24 @@ td {
   gap: 0.65rem;
 }
 
+.lead-auth-panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(13, 11, 11, 0.92);
+  padding: 0.8rem;
+  margin-bottom: 0.9rem;
+}
+
+.lead-auth-panel h4 {
+  margin: 0 0 0.35rem;
+}
+
+.lead-auth-panel .action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
 .honeypot-wrap {
   position: absolute;
   left: -9999px;
@@ -415,6 +440,12 @@ td {
   color: var(--red-soft);
 }
 
+.field-error {
+  margin: 0.32rem 0 0;
+  color: var(--red-soft);
+  font-size: 0.8rem;
+}
+
 label {
   font-weight: 600;
   font-size: 0.86rem;
@@ -435,6 +466,19 @@ textarea {
 textarea {
   min-height: 130px;
   resize: vertical;
+}
+
+input[aria-invalid="true"],
+select[aria-invalid="true"],
+textarea[aria-invalid="true"] {
+  border-color: var(--red-soft);
+  box-shadow: 0 0 0 1px rgba(255, 103, 103, 0.25);
+}
+
+button[disabled],
+.button[aria-disabled="true"] {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 input:focus,
@@ -809,6 +853,82 @@ textarea:focus,
   .chart-toolbar {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .container {
+    width: 94vw;
+  }
+
+  .hero {
+    padding: 4.2rem 0 2.7rem;
+  }
+
+  .hero p {
+    font-size: 0.95rem;
+  }
+
+  .button-row {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .button-row .button {
+    width: 100%;
+  }
+
+  .section {
+    padding: 3.1rem 0;
+  }
+
+  .chart-card {
+    padding: 0.78rem;
+  }
+
+  .chart-shell {
+    min-height: 250px;
+  }
+
+  .chart-window-controls button,
+  .chart-legend button {
+    min-height: 40px;
+    padding: 0.4rem 0.72rem;
+  }
+
+  .chart-tooltip {
+    min-width: 155px;
+    max-width: 220px;
+    padding: 0.45rem 0.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  h1 {
+    font-size: clamp(2.35rem, 13vw, 3.2rem);
+    letter-spacing: 0.03em;
+  }
+
+  .topbar {
+    min-height: 62px;
+  }
+
+  .brand-label {
+    font-size: 1.3rem;
+  }
+
+  .nav-toggle {
+    min-height: 42px;
+    padding: 0.4rem 0.62rem;
+  }
+
+  .chart-axis {
+    font-size: 10px;
+  }
+
+  .chart-note-list {
+    font-size: 0.74rem;
+    padding-left: 0.9rem;
   }
 }
 

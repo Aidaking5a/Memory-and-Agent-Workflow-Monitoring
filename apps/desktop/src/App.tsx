@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { loadDashboardData } from "./api";
+import {
+  ApiAuthError,
+  getAuthUserEmail,
+  loadAuthProfile,
+  loadDashboardData,
+  logoutLocalAccount,
+  signinLocalAccount,
+  signupLocalAccount
+} from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { emptyDashboardData } from "./mock-data";
@@ -15,6 +23,7 @@ import { OverviewView } from "./views/OverviewView";
 import { SettingsView } from "./views/SettingsView";
 import { TimelineView } from "./views/TimelineView";
 import { WorkflowGovernanceView } from "./views/WorkflowGovernanceView";
+import { AuthView } from "./views/AuthView";
 
 const VIEW_LABELS: Record<ViewKey, string> = {
   onboarding: "OpenClaw Setup",
@@ -34,35 +43,118 @@ export function App() {
   const [view, setView] = useState<ViewKey>("overview");
   const [data, setData] = useState<DashboardData>(emptyDashboardData);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | undefined>(undefined);
+  const [authEmail, setAuthEmail] = useState<string | null>(getAuthUserEmail());
 
   const refreshData = useCallback(async () => {
+    if (!authenticated) return;
     setIsRefreshing(true);
     try {
       const next = await loadDashboardData();
       setData(next);
+      setAuthError(undefined);
+    } catch (error) {
+      if (error instanceof ApiAuthError) {
+        setAuthenticated(false);
+        setAuthEmail(null);
+        setAuthError("Session expired. Sign in again.");
+        return;
+      }
+      setAuthError(error instanceof Error ? error.message : "Unable to refresh dashboard data.");
     } finally {
       setIsRefreshing(false);
     }
+  }, [authenticated]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const init = async () => {
+      setAuthBusy(true);
+      try {
+        const profile = await loadAuthProfile();
+        if (cancelled) return;
+        if (profile.authenticated && profile.user) {
+          setAuthenticated(true);
+          setAuthEmail(profile.user.email);
+          setAuthError(undefined);
+        } else {
+          setAuthenticated(false);
+        }
+      } finally {
+        if (!cancelled) {
+          setAuthBusy(false);
+          setAuthReady(true);
+        }
+      }
+    };
+    void init();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    void refreshData();
-  }, [refreshData]);
+    if (authenticated) {
+      void refreshData();
+    }
+  }, [authenticated, refreshData]);
 
   useEffect(() => {
+    if (!authenticated) return;
     if (!data.connection.connected) {
       setView("onboarding");
     } else if (view === "onboarding") {
       setView("overview");
     }
-  }, [data.connection.connected, view]);
+  }, [authenticated, data.connection.connected, view]);
 
   useEffect(() => {
+    if (!authenticated) return;
     const timer = window.setInterval(() => {
       void refreshData();
     }, 15000);
     return () => window.clearInterval(timer);
-  }, [refreshData]);
+  }, [authenticated, refreshData]);
+
+  const handleSignIn = useCallback(async (email: string, password: string) => {
+    setAuthBusy(true);
+    setAuthError(undefined);
+    try {
+      const session = await signinLocalAccount(email, password);
+      setAuthenticated(true);
+      setAuthEmail(session.user.email);
+      setView("overview");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Unable to sign in.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }, []);
+
+  const handleSignUp = useCallback(async (email: string, password: string) => {
+    setAuthBusy(true);
+    setAuthError(undefined);
+    try {
+      const session = await signupLocalAccount(email, password);
+      setAuthenticated(true);
+      setAuthEmail(session.user.email);
+      setView("overview");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Unable to create account.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    await logoutLocalAccount();
+    setAuthenticated(false);
+    setAuthEmail(null);
+    setData(emptyDashboardData);
+  }, []);
 
   const body = useMemo(() => {
     switch (view) {
@@ -71,7 +163,7 @@ export function App() {
       case "overview":
         return <OverviewView data={data} onOpenClawOps={() => setView("openclaw")} />;
       case "openclaw":
-        return <OpenClawView data={data} onOpenSetup={() => setView("onboarding")} />;
+        return <OpenClawView data={data} onOpenSetup={() => setView("onboarding")} onRefresh={refreshData} />;
       case "agents":
         return <AgentsView data={data} />;
       case "timeline":
@@ -93,6 +185,21 @@ export function App() {
     }
   }, [data, isRefreshing, refreshData, view]);
 
+  if (!authReady) {
+    return (
+      <div className="auth-shell">
+        <section className="auth-card">
+          <h2>Loading Theia Control Center</h2>
+          <p className="muted-note">Verifying local session and workspace state...</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (!authenticated) {
+    return <AuthView busy={authBusy} error={authError} onSignIn={handleSignIn} onSignUp={handleSignUp} />;
+  }
+
   return (
     <div className="app-shell">
       <Sidebar current={view} onSelect={setView} />
@@ -102,6 +209,10 @@ export function App() {
           timeRange={data.timeRange}
           connected={data.connection.connected}
           generatedAt={data.generatedAt}
+          signedInEmail={authEmail}
+          onSignOut={() => {
+            void handleLogout();
+          }}
         />
         <section className="view-header">
           <h2>{VIEW_LABELS[view]}</h2>

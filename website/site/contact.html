@@ -46,20 +46,41 @@
           <article class="card">
             <h3>Request Demo</h3>
             <p class="section-sub" style="margin-top:0;">
-              Form submissions are handled by Theia control-plane lead intake and appear in the authenticated lead inbox.
+              Sign in first, then submit. Requests are validated server-side, deduplicated, and routed through Theia control-plane delivery tracking.
             </p>
-            <form class="form-grid" data-theia-lead-form data-api-base-url="https://theia-control-plane.onrender.com">
+            <section class="lead-auth-panel" data-lead-auth-panel>
+              <h4>Sign In Required</h4>
+              <p class="section-sub" style="margin-top:0;">Use your Theia account to submit and track your application.</p>
+              <form class="form-grid" data-lead-auth-form novalidate>
+                <div>
+                  <label for="leadAuthEmail">Email</label>
+                  <input id="leadAuthEmail" name="email" type="email" autocomplete="email" maxlength="200" required />
+                </div>
+                <div>
+                  <label for="leadAuthPassword">Password</label>
+                  <input id="leadAuthPassword" name="password" type="password" autocomplete="current-password" minlength="10" maxlength="120" required />
+                </div>
+                <div class="action-row">
+                  <button class="button secondary" type="button" data-lead-auth-action="signin">Sign In</button>
+                  <button class="button ghost" type="button" data-lead-auth-action="signup">Create Account</button>
+                  <button class="button ghost" type="button" data-lead-auth-action="logout">Logout</button>
+                </div>
+                <div class="form-feedback" data-lead-auth-feedback role="status" aria-live="polite"></div>
+                <p class="section-sub" data-lead-auth-user>Not signed in.</p>
+              </form>
+            </section>
+            <form class="form-grid" data-theia-lead-form data-api-base-url="https://theia-control-plane.onrender.com" novalidate>
               <div>
                 <label for="name">Name</label>
-                <input id="name" name="name" autocomplete="name" required />
+                <input id="name" name="name" autocomplete="name" minlength="2" maxlength="80" required />
               </div>
               <div>
                 <label for="email">Work Email</label>
-                <input id="email" name="email" type="email" autocomplete="email" required />
+                <input id="email" name="email" type="email" autocomplete="email" maxlength="200" required />
               </div>
               <div>
                 <label for="company">Company</label>
-                <input id="company" name="company" autocomplete="organization" />
+                <input id="company" name="company" autocomplete="organization" maxlength="120" />
               </div>
               <div>
                 <label for="role">Role</label>
@@ -74,7 +95,7 @@
               </div>
               <div>
                 <label for="environment">Agent Environment</label>
-                <textarea id="environment" name="environment" placeholder="Describe agent tools, data sources, and governance needs" required></textarea>
+                <textarea id="environment" name="environment" minlength="20" maxlength="2000" placeholder="Describe agent tools, data sources, and governance needs" required></textarea>
               </div>
               <input type="hidden" name="sourcePage" value="/contact.html" />
               <div class="honeypot-wrap" aria-hidden="true">
