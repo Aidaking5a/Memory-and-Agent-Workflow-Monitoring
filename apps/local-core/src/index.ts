@@ -1,9 +1,13 @@
 // @ts-nocheck
 import Fastify from "fastify";
 import { access, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import path from "node:path";
+import { promisify } from "node:util";
 import { evaluateRun } from "@theia/reasoning-engine";
 import { TheiaCore } from "./core.js";
+import { createHighRiskNotificationEngine } from "./high-risk-notifications.js";
+const execFileAsync = promisify(execFile);
 const workspaceId = process.env.THEIA_WORKSPACE_ID ?? "ws_local_default";
 const workspaceName = process.env.THEIA_WORKSPACE_NAME ?? "Theia Local Workspace";
 const stateFilePath = path.resolve(process.env.THEIA_LOCAL_CORE_STATE_PATH ?? path.join(process.cwd(), ".theia", "local-core-state.json"));
@@ -20,15 +24,39 @@ const roleCapabilities = {
 const runtime = {
     enabled: toBool(process.env.THEIA_OPENCLAW_RUNTIME_ENABLED) ?? false,
     mode: normalizeRuntimeMode(process.env.THEIA_OPENCLAW_RUNTIME_MODE),
+    transport: normalizeRuntimeTransport(process.env.THEIA_OPENCLAW_RUNTIME_TRANSPORT),
     endpoint: text(process.env.THEIA_OPENCLAW_RUNTIME_URL),
     apiKey: text(process.env.THEIA_OPENCLAW_RUNTIME_API_KEY),
     cursor: text(process.env.THEIA_OPENCLAW_RUNTIME_CURSOR),
+    cliCommand: text(process.env.THEIA_OPENCLAW_CLI_COMMAND) ?? (process.platform === "win32" ? "openclaw.cmd" : "openclaw"),
+    cliTimeoutMs: num(process.env.THEIA_OPENCLAW_CLI_TIMEOUT_MS) ?? 9000,
     lastSyncAt: undefined,
     lastError: undefined,
     lastEventCount: 0
 };
+const runtimeEventDedup = new Map();
+const eventFeedCursorCache = new Set();
+const openClawDiagnosticsState = {
+    sourceHealth: {
+        totalConfigured: 0,
+        existing: [],
+        missing: [],
+        directories: []
+    },
+    gateway: undefined,
+    status: undefined,
+    health: undefined,
+    recentLogMeta: undefined
+};
 const alertOverrides = new Map();
+const highRiskEngine = createHighRiskNotificationEngine({
+    options: {
+        onMutation: () => scheduleStatePersist("high-risk.notification")
+    }
+});
+applyHighRiskEnvDefaults();
 let runtimeSequence = 0;
+let scheduledPersistTimer = undefined;
 const approvedPaths = new Set((process.env.THEIA_APPROVED_PATHS ?? process.cwd()).split(",").map((x) => path.resolve(x.trim())).filter(Boolean));
 const sources = {
     fileSources: parseList(process.env.THEIA_FILE_SOURCES ?? "memory.md,bootstrap.md").map((x) => path.resolve(x)),
@@ -82,7 +110,18 @@ app.addHook("onRequest", async (request, reply) => {
 });
 app.get("/health", async () => ({ status: "ok", service: "theia-local-core", workspaceId, setupConnected: setup.connected }));
 app.get("/operator/context", async (request) => operatorContext(request));
-app.get("/setup/openclaw/status", async (request) => ({ ...setup, runtime: runtimeView(), approvedPaths: [...approvedPaths], operator: operatorContext(request) }));
+app.get("/setup/openclaw/status", async (request) => ({
+    ...setup,
+    runtime: runtimeView(),
+    diagnostics: {
+        sourceHealth: openClawDiagnosticsState.sourceHealth,
+        gateway: openClawDiagnosticsState.gateway,
+        status: openClawDiagnosticsState.status,
+        health: openClawDiagnosticsState.health
+    },
+    approvedPaths: [...approvedPaths],
+    operator: operatorContext(request)
+}));
 app.post("/setup/openclaw/discover", async (request, reply) => {
     const operator = operatorContext(request);
     if (!requireCapability(reply, operator, "setup:write", "discover workspace")) {
@@ -127,13 +166,21 @@ app.post("/setup/openclaw/connect", async (request, reply) => {
         sources.fileSources = uniq([memoryPath, bootstrapPath].filter((x) => Boolean(x)).map((x) => path.resolve(x)));
         sources.codexLogSources = uniq((requested.codexLogPaths ?? setup.discoveredSources.codexLogPaths).map((x) => path.resolve(x)));
         sources.customJsonSources = uniq((requested.customJsonLogPaths ?? setup.discoveredSources.customJsonLogPaths).map((x) => path.resolve(x)));
-        sources.openClawSources = uniq((requested.openClawLogPaths ?? setup.discoveredSources.openClawLogPaths).map((x) => path.resolve(x)));
-        const allSources = [...sources.fileSources, ...sources.codexLogSources, ...sources.customJsonSources, ...sources.openClawSources];
-        for (const sourcePath of allSources) {
+        sources.openClawSources = await normalizeOpenClawSourcePaths(uniq((requested.openClawLogPaths ?? setup.discoveredSources.openClawLogPaths).map((x) => path.resolve(x))));
+        const requiredSources = [...sources.fileSources, ...sources.codexLogSources, ...sources.customJsonSources];
+        const openClawMissing = [];
+        for (const sourcePath of requiredSources) {
             if (!(await exists(sourcePath)))
                 throw new Error(`Missing source path: ${sourcePath}`);
             if (!isApproved(sourcePath))
                 throw new Error(`Source path outside approved scope: ${sourcePath}`);
+        }
+        for (const sourcePath of sources.openClawSources) {
+            if (!isApproved(sourcePath))
+                throw new Error(`Source path outside approved scope: ${sourcePath}`);
+            if (!(await exists(sourcePath))) {
+                openClawMissing.push(sourcePath);
+            }
         }
         const runtimeInput = body.runtime ?? {};
         const explicitRuntimeEnabled = toBool(runtimeInput.enabled);
@@ -148,8 +195,19 @@ app.post("/setup/openclaw/connect", async (request, reply) => {
         if (typeof runtimeInput.cursor === "string") {
             runtime.cursor = runtimeInput.cursor.trim() || undefined;
         }
+        runtime.transport = normalizeRuntimeTransport(runtimeInput.transport ?? runtime.transport);
+        if (typeof runtimeInput.cliCommand === "string") {
+            runtime.cliCommand = runtimeInput.cliCommand.trim() || runtime.cliCommand;
+        }
+        if (typeof runtimeInput.cliTimeoutMs === "number" && Number.isFinite(runtimeInput.cliTimeoutMs)) {
+            runtime.cliTimeoutMs = Math.max(2000, Math.floor(runtimeInput.cliTimeoutMs));
+        }
+        if (runtime.enabled && runtime.mode !== "log_only" && runtime.transport === "event_feed" && !runtime.endpoint) {
+            throw new Error("Runtime endpoint is required when transport is event_feed.");
+        }
         if (!runtime.enabled || runtime.mode === "log_only") {
             runtime.lastError = undefined;
+            runtime.cursor = undefined;
         }
         const toggles = body.pluginEnabled ?? {};
         for (const plugin of pluginListSync()) {
@@ -173,10 +231,13 @@ app.post("/setup/openclaw/connect", async (request, reply) => {
         setup.runtime = runtimeView();
         setup.connected = true;
         setup.lastConnectedAt = new Date().toISOString();
+        if (openClawMissing.length > 0) {
+            runtime.lastError = `OpenClaw source paths currently missing (${openClawMissing.length}). The connector will suppress noisy run.failed spam and continue probing healthy sources.`;
+        }
         await rebuildCore();
         await validateSetup(true);
         await persistState("setup.connect");
-        return { connected: true, setup, plugins: await pluginList(), operator };
+        return { connected: true, setup, plugins: await pluginList(), openClawMissing, operator };
     }
     catch (error) {
         reply.code(400);
@@ -226,6 +287,15 @@ app.get("/dashboard/snapshot", async (request) => {
         return snapshot ? evaluateRun(snapshot) : [];
     });
     const alerts = rawAlerts.map((alert) => applyAlertOverride(alert));
+    const openClawLive = buildOpenClawLive(events, runs, pluginRows);
+    const notificationCenter = {
+        settings: highRiskEngine.getSettings(),
+        taxonomy: highRiskEngine.getTaxonomy(),
+        history: highRiskEngine.listHistory({ limit: 120 }),
+        banner: highRiskEngine.getActiveBanner(),
+        pipeline: highRiskEngine.getPipelineSummary(),
+        slo: highRiskEngine.getSloSummary()
+    };
     const agents = buildAgents(runs, events, alerts, connectorHealth);
     const tokenSeries = buildTokenSeries(events);
     const workloadSeries = buildWorkloadSeries(events);
@@ -245,7 +315,8 @@ app.get("/dashboard/snapshot", async (request) => {
         timeRange: "Last 12 hours",
         connection: { ...setup, runtime: runtimeView() },
         operator,
-        metrics: buildMetrics(agents, runs, alerts, tokenSeries, connectorHealth, pluginRows, memoryRows),
+        openClawLive,
+        metrics: buildMetrics(agents, runs, alerts, tokenSeries, connectorHealth, pluginRows, memoryRows, notificationCenter),
         agents,
         runs: runs.map((run) => summarizeRun(run, events)),
         timeline: [...events].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 60).map((event) => ({
@@ -314,12 +385,33 @@ app.get("/dashboard/snapshot", async (request) => {
             conflictCount: w.conflictWithWorkflowIds.length,
             updatedAt: w.updatedAt
         })),
+        notificationCenter,
         workflowReport: core.getWorkflowReleaseGateReport(),
         workflowPolicy: core.getWorkflowPromotionPolicy(),
         ingestSummary: {
             latestEventCount: ingest.events.length,
             latestMemoryObjects: ingest.memoryObjects.length,
             latestMemoryVersions: ingest.memoryVersions.length
+        }
+    };
+});
+app.get("/openclaw/operations", async (request) => {
+    const operator = operatorContext(request);
+    const ingest = await performIngestion();
+    const runs = deriveRuns(core.listRuns(), core.listEvents());
+    const events = core.listEvents();
+    const plugins = await pluginList();
+    return {
+        generatedAt: new Date().toISOString(),
+        workspaceId,
+        workspaceName,
+        operator,
+        runtime: runtimeView(),
+        openClawLive: buildOpenClawLive(events, runs, plugins),
+        connectors: plugins,
+        ingestSummary: {
+            latestEventCount: ingest.events.length,
+            runtimeEventCount: ingest.runtimeEvents.length
         }
     };
 });
@@ -357,6 +449,58 @@ app.post("/alerts/:alertId/status", async (request, reply) => {
     await persistState("alerts.status");
     return { alertId, status, note, actorId, updatedAt: alertOverrides.get(alertId)?.updatedAt };
 });
+app.get("/notifications/high-risk/settings", async () => highRiskEngine.getSettings());
+app.put("/notifications/high-risk/settings", async (request, reply) => {
+    const operator = operatorContext(request);
+    if (!requireCapability(reply, operator, "alert:write", "update high-risk notification settings")) {
+        return denyCapability(operator, "alert:write");
+    }
+    const settings = highRiskEngine.updateSettings(request.body ?? {});
+    await persistState("notifications.high-risk.settings");
+    return { settings, operator };
+});
+app.post("/notifications/high-risk/test", async (request, reply) => {
+    const operator = operatorContext(request);
+    if (!requireCapability(reply, operator, "alert:write", "send test high-risk notification")) {
+        return denyCapability(operator, "alert:write");
+    }
+    const record = await highRiskEngine.enqueueTestNotification(request.body ?? {});
+    await persistState("notifications.high-risk.test");
+    return { record, operator };
+});
+app.get("/notifications/high-risk/history", async (request) => {
+    const query = request.query ?? {};
+    return highRiskEngine.listHistory({
+        q: text(query.q),
+        severity: text(query.severity),
+        status: text(query.status),
+        channel: text(query.channel),
+        dedupeStatus: text(query.dedupeStatus),
+        limit: num(query.limit)
+    });
+});
+app.post("/notifications/high-risk/:notificationId/status", async (request, reply) => {
+    const operator = operatorContext(request);
+    if (!requireCapability(reply, operator, "alert:write", "update high-risk notification status")) {
+        return denyCapability(operator, "alert:write");
+    }
+    const status = text(request.body?.status);
+    if (!status || !["open", "acknowledged", "resolved"].includes(status)) {
+        reply.code(400);
+        return { message: "status must be one of open|acknowledged|resolved." };
+    }
+    const updated = highRiskEngine.updateRecordStatus(request.params.notificationId, status);
+    if (!updated) {
+        reply.code(404);
+        return { message: "Notification not found." };
+    }
+    await persistState("notifications.high-risk.status");
+    return updated;
+});
+app.get("/notifications/high-risk/pipeline", async () => highRiskEngine.getPipelineSummary());
+app.get("/notifications/high-risk/slo", async () => highRiskEngine.getSloSummary());
+app.get("/notifications/high-risk/banner", async () => highRiskEngine.getActiveBanner());
+app.get("/notifications/high-risk/taxonomy", async () => highRiskEngine.getTaxonomy());
 app.post("/runs", async (request) => core.createRun(request.body.objective, request.body.agentId, request.body.metadata));
 app.get("/runs", async () => core.listRuns());
 app.post("/runs/:runId/status", async (request, reply) => {
@@ -502,7 +646,7 @@ async function validateSetup(runIngest) {
     }
     checks.push({
         id: "runtime",
-        label: "OpenClaw Runtime RPC",
+        label: "OpenClaw Runtime Telemetry",
         status: runtime.enabled
             ? runtime.mode === "log_only"
                 ? "warn"
@@ -513,8 +657,11 @@ async function validateSetup(runIngest) {
                         : "warn"
             : "warn",
         detail: runtime.enabled
-            ? runtime.lastError ?? `${runtime.mode} mode (${runtime.endpoint ?? "endpoint missing"})`
-            : "Runtime RPC disabled"
+            ? runtime.lastError ??
+                (runtime.transport === "event_feed"
+                    ? `${runtime.mode} mode via event-feed (${runtime.endpoint ?? "endpoint missing"})`
+                    : `${runtime.mode} mode via OpenClaw CLI (${runtime.cliCommand})`)
+            : "Runtime telemetry disabled"
     });
     const pluginRows = await pluginList();
     const enabled = pluginRows.filter((plugin) => plugin.enabled).length;
@@ -535,11 +682,12 @@ async function pluginList() {
         let lastSync = health?.lastSuccessfulPollAt;
         if (plugin.pluginId === "openclaw-main" && plugin.enabled && runtime.enabled && runtime.mode !== "log_only") {
             status = runtime.lastError ? "degraded" : runtime.lastSyncAt ? "healthy" : status === "offline" ? "degraded" : status;
+            const transportLabel = runtime.transport === "event_feed" ? "event-feed" : "gateway-cli";
             syncHealth = runtime.lastError
-                ? `Runtime RPC warning: ${runtime.lastError}`
+                ? `Runtime ${transportLabel} warning: ${runtime.lastError}`
                 : runtime.lastSyncAt
-                    ? `Runtime RPC synchronized (${runtime.mode})`
-                    : `Runtime RPC configured (${runtime.mode})`;
+                    ? `Runtime ${transportLabel} synchronized (${runtime.mode})`
+                    : `Runtime ${transportLabel} configured (${runtime.mode})`;
             lastSync = runtime.lastSyncAt ?? lastSync;
         }
         return {
@@ -551,12 +699,12 @@ async function pluginList() {
     });
 }
 function pluginListSync() {
-    const openclawSourceCount = sources.openClawSources.length + (runtime.enabled && runtime.mode !== "log_only" && runtime.endpoint ? 1 : 0);
+    const openclawSourceCount = sources.openClawSources.length + (runtime.enabled && runtime.mode !== "log_only" ? 1 : 0);
     return [
         { pluginId: "local-file-main", name: "Local File Connector", description: "Reads memory.md/bootstrap.md", capabilities: ["read_memory_files", "read_run_events"], enabled: pluginEnabled["local-file-main"], sourceCount: sources.fileSources.length },
         { pluginId: "codex-cli-main", name: "Codex CLI Connector", description: "Reads Codex logs", capabilities: ["read_run_events", "read_tool_traces", "read_task_plans"], enabled: pluginEnabled["codex-cli-main"], sourceCount: sources.codexLogSources.length },
         { pluginId: "custom-json-main", name: "Custom JSON Connector", description: "Reads custom JSON telemetry", capabilities: ["read_run_events", "read_tool_traces", "read_task_plans"], enabled: pluginEnabled["custom-json-main"], sourceCount: sources.customJsonSources.length },
-        { pluginId: "openclaw-main", name: "OpenClaw Connector", description: "Reads OpenClaw traces and optional runtime API", capabilities: ["read_run_events", "read_tool_traces", "read_task_plans", "read_prompts"], enabled: pluginEnabled["openclaw-main"], sourceCount: openclawSourceCount }
+        { pluginId: "openclaw-main", name: "OpenClaw Connector", description: "Reads OpenClaw traces and optional gateway telemetry", capabilities: ["read_run_events", "read_tool_traces", "read_task_plans", "read_prompts"], enabled: pluginEnabled["openclaw-main"], sourceCount: openclawSourceCount }
     ];
 }
 async function performIngestion() {
@@ -567,58 +715,29 @@ async function performIngestion() {
             core.addEvent(event);
         }
     }
+    const mergedEvents = [...ingest.events, ...runtimeEvents];
+    const highRisk = highRiskEngine.ingestEvents(mergedEvents);
     return {
         ...ingest,
-        events: [...ingest.events, ...runtimeEvents],
-        runtimeEvents
+        events: mergedEvents,
+        runtimeEvents,
+        highRisk
     };
 }
 async function pollOpenClawRuntime() {
     if (!pluginEnabled["openclaw-main"]) {
         return [];
     }
+    openClawDiagnosticsState.sourceHealth = await inspectOpenClawSources(sources.openClawSources);
     if (!runtime.enabled || runtime.mode === "log_only") {
-        return [];
-    }
-    if (!runtime.endpoint) {
-        runtime.lastError = "Runtime endpoint is missing.";
         setup.runtime = runtimeView();
         return [];
     }
     try {
-        const url = new URL(runtime.endpoint);
-        if (runtime.cursor) {
-            url.searchParams.set("cursor", runtime.cursor);
-        }
-        url.searchParams.set("workspaceId", workspaceId);
-        url.searchParams.set("limit", "250");
-        const headers = { Accept: "application/json" };
-        if (runtime.apiKey) {
-            headers.Authorization = `Bearer ${runtime.apiKey}`;
-        }
-        const response = await fetch(url, { headers, method: "GET" });
-        if (!response.ok) {
-            throw new Error(`Runtime endpoint request failed (${response.status}).`);
-        }
-        const payload = await response.json();
-        const records = normalizeRuntimePayload(payload);
-        const events = [];
-        for (const record of records) {
-            const event = buildRuntimeEvent(record, runtime.endpoint);
-            if (event) {
-                events.push(event);
-            }
-        }
+        const events = runtime.transport === "event_feed" ? await pollOpenClawRuntimeEventFeed() : await pollOpenClawRuntimeCli();
         runtime.lastEventCount = events.length;
         runtime.lastSyncAt = new Date().toISOString();
         runtime.lastError = undefined;
-        if (typeof payload?.nextCursor === "string" && payload.nextCursor.trim().length > 0) {
-            runtime.cursor = payload.nextCursor.trim();
-        }
-        else if (records.length > 0) {
-            const tail = records[records.length - 1];
-            runtime.cursor = text(tail?.cursor) ?? text(tail?.id) ?? text(tail?.eventId) ?? text(tail?.timestamp) ?? runtime.cursor;
-        }
         setup.runtime = runtimeView();
         await persistState("runtime.poll");
         return events;
@@ -629,6 +748,281 @@ async function pollOpenClawRuntime() {
         await persistState("runtime.poll.error");
         return [];
     }
+}
+async function pollOpenClawRuntimeEventFeed() {
+    if (!runtime.endpoint) {
+        throw new Error("Runtime event-feed endpoint is missing.");
+    }
+    if (/\/v1\/?$/i.test(runtime.endpoint)) {
+        throw new Error("Runtime endpoint appears to be an OpenAI-compatible inference endpoint (/v1). Switch runtime transport to gateway_cli or provide a true workflow event-feed URL.");
+    }
+    const url = new URL(runtime.endpoint);
+    if (runtime.cursor) {
+        url.searchParams.set("cursor", runtime.cursor);
+    }
+    url.searchParams.set("workspaceId", workspaceId);
+    url.searchParams.set("limit", "250");
+    const headers = { Accept: "application/json" };
+    if (runtime.apiKey) {
+        headers.Authorization = `Bearer ${runtime.apiKey}`;
+    }
+    const response = await fetch(url, { headers, method: "GET" });
+    if (!response.ok) {
+        throw new Error(`Runtime endpoint request failed (${response.status}).`);
+    }
+    const payload = await response.json();
+    const records = normalizeRuntimePayload(payload);
+    const events = [];
+    for (const record of records) {
+        const dedupeKey = text(record.cursor) ?? text(record.id) ?? text(record.eventId) ?? text(record.timestamp);
+        if (dedupeKey && eventFeedCursorCache.has(dedupeKey)) {
+            continue;
+        }
+        if (dedupeKey) {
+            cacheRuntimeDedupKey(dedupeKey);
+        }
+        const event = buildRuntimeEvent(record, runtime.endpoint, "openclaw-runtime-event-feed");
+        if (event) {
+            events.push(event);
+        }
+    }
+    if (typeof payload?.nextCursor === "string" && payload.nextCursor.trim().length > 0) {
+        runtime.cursor = payload.nextCursor.trim();
+    }
+    else if (records.length > 0) {
+        const tail = records[records.length - 1];
+        runtime.cursor = text(tail?.cursor) ?? text(tail?.id) ?? text(tail?.eventId) ?? text(tail?.timestamp) ?? runtime.cursor;
+    }
+    openClawDiagnosticsState.gateway = {
+        mode: "event_feed",
+        endpoint: runtime.endpoint,
+        ok: true
+    };
+    openClawDiagnosticsState.status = undefined;
+    openClawDiagnosticsState.health = undefined;
+    openClawDiagnosticsState.recentLogMeta = undefined;
+    return events;
+}
+async function pollOpenClawRuntimeCli() {
+    const command = text(runtime.cliCommand);
+    if (!command) {
+        throw new Error("OpenClaw CLI command is missing.");
+    }
+    const [gatewayResult, statusResult, healthResult, logsResult] = await Promise.all([
+        runOpenClawJsonCommand(["gateway", "status", "--json"]),
+        runOpenClawJsonCommand(["status", "--json"]),
+        runOpenClawJsonCommand(["health", "--json"]),
+        runOpenClawLogsCommand(["logs", "--limit", "40", "--json"])
+    ]);
+    if (!gatewayResult.ok && !statusResult.ok && !healthResult.ok && !logsResult.ok) {
+        throw new Error(gatewayResult.error ?? statusResult.error ?? healthResult.error ?? logsResult.error ?? "OpenClaw CLI probe failed.");
+    }
+    const gateway = gatewayResult.ok ? gatewayResult.value : undefined;
+    const status = statusResult.ok ? statusResult.value : undefined;
+    const health = healthResult.ok ? healthResult.value : undefined;
+    openClawDiagnosticsState.gateway = gateway;
+    openClawDiagnosticsState.status = status;
+    openClawDiagnosticsState.health = health;
+    const events = [];
+    const nowIso = new Date().toISOString();
+    if (gateway && typeof gateway === "object") {
+        const gatewayHealthy = Boolean(gateway?.rpc?.ok ?? gateway?.health?.healthy);
+        events.push({
+            eventId: `openclaw-cli:gateway:${Date.now()}:${++runtimeSequence}`,
+            workspaceId,
+            agentId: "agent:openclaw",
+            runId: "run:openclaw",
+            eventType: gatewayHealthy ? "run.started" : "run.failed",
+            timestamp: nowIso,
+            payload: {
+                sourceSystem: "openclaw-runtime-cli",
+                summary: gatewayHealthy ? "OpenClaw gateway status probe healthy." : "OpenClaw gateway status probe degraded.",
+                gateway
+            },
+            source: {
+                connectorId: "openclaw-runtime-cli",
+                objectPath: "openclaw gateway status --json"
+            },
+            confidence: gatewayHealthy ? 0.92 : 0.88,
+            evidenceRefs: []
+        });
+    }
+    const sessionCount = num(status?.sessions?.count) ?? num(status?.agents?.totalSessions) ?? 0;
+    if (status && typeof status === "object") {
+        events.push({
+            eventId: `openclaw-cli:status:${Date.now()}:${++runtimeSequence}`,
+            workspaceId,
+            agentId: "agent:openclaw",
+            runId: "run:openclaw",
+            eventType: "checkpoint.created",
+            timestamp: nowIso,
+            payload: {
+                sourceSystem: "openclaw-runtime-cli",
+                summary: `OpenClaw status reports ${sessionCount} stored session(s).`,
+                status
+            },
+            source: {
+                connectorId: "openclaw-runtime-cli",
+                objectPath: "openclaw status --json"
+            },
+            confidence: 0.8,
+            evidenceRefs: []
+        });
+    }
+    const healthIsOk = Boolean(health?.ok);
+    if (health && typeof health === "object") {
+        events.push({
+            eventId: `openclaw-cli:health:${Date.now()}:${++runtimeSequence}`,
+            workspaceId,
+            agentId: "agent:openclaw",
+            runId: "run:openclaw",
+            eventType: healthIsOk ? "checkpoint.created" : "run.failed",
+            timestamp: nowIso,
+            payload: {
+                sourceSystem: "openclaw-runtime-cli",
+                summary: healthIsOk ? "OpenClaw health probe is healthy." : "OpenClaw health probe is degraded.",
+                health
+            },
+            source: {
+                connectorId: "openclaw-runtime-cli",
+                objectPath: "openclaw health --json"
+            },
+            confidence: healthIsOk ? 0.85 : 0.9,
+            evidenceRefs: []
+        });
+    }
+    const parsedLogRecords = [];
+    if (logsResult.ok) {
+        for (const line of logsResult.value) {
+            const parsed = safeJsonParse(line);
+            if (parsed && typeof parsed === "object") {
+                parsedLogRecords.push(parsed);
+            }
+        }
+    }
+    openClawDiagnosticsState.recentLogMeta = parsedLogRecords.find((entry) => text(entry.type) === "meta") ?? undefined;
+    for (const entry of parsedLogRecords) {
+        if (text(entry.type) !== "log") {
+            continue;
+        }
+        const timestamp = text(entry.time) ?? nowIso;
+        const level = text(entry.level)?.toLowerCase() ?? "info";
+        const moduleName = text(entry.module) ?? "openclaw";
+        const message = text(entry.message) ?? "";
+        const dedupeKey = `${timestamp}:${level}:${moduleName}:${message.slice(0, 180)}`;
+        if (runtimeEventDedup.has(dedupeKey)) {
+            continue;
+        }
+        cacheRuntimeDedupKey(dedupeKey);
+        events.push({
+            eventId: `openclaw-cli:log:${Date.now()}:${++runtimeSequence}`,
+            workspaceId,
+            agentId: "agent:openclaw",
+            runId: "run:openclaw",
+            eventType: level === "error" || level === "fatal" ? "run.failed" : "task.updated",
+            timestamp,
+            payload: {
+                sourceSystem: "openclaw-runtime-cli-log",
+                summary: message.length > 0 ? message : `${moduleName} ${level}`,
+                module: moduleName,
+                level,
+                log: entry
+            },
+            source: {
+                connectorId: "openclaw-runtime-cli",
+                objectPath: "openclaw logs --json"
+            },
+            confidence: level === "error" || level === "fatal" ? 0.86 : 0.6,
+            evidenceRefs: []
+        });
+    }
+    return events;
+}
+async function runOpenClawJsonCommand(args) {
+    try {
+        const { stdout } = await execFileAsync(runtime.cliCommand, args, {
+            timeout: runtime.cliTimeoutMs,
+            windowsHide: true,
+            maxBuffer: 1024 * 1024 * 5
+        });
+        const parsed = safeJsonParse(stdout);
+        if (!parsed || typeof parsed !== "object") {
+            return {
+                ok: false,
+                error: `Invalid JSON response from '${runtime.cliCommand} ${args.join(" ")}'.`
+            };
+        }
+        return { ok: true, value: parsed };
+    }
+    catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : `Failed to run ${args.join(" ")}` };
+    }
+}
+async function runOpenClawLogsCommand(args) {
+    try {
+        const { stdout } = await execFileAsync(runtime.cliCommand, args, {
+            timeout: runtime.cliTimeoutMs,
+            windowsHide: true,
+            maxBuffer: 1024 * 1024 * 8
+        });
+        return {
+            ok: true,
+            value: stdout
+                .split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter(Boolean)
+        };
+    }
+    catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : `Failed to run ${args.join(" ")}` };
+    }
+}
+function cacheRuntimeDedupKey(key) {
+    const now = Date.now();
+    runtimeEventDedup.set(key, now);
+    eventFeedCursorCache.add(key);
+    if (runtimeEventDedup.size <= 950) {
+        return;
+    }
+    const oldest = [...runtimeEventDedup.entries()].sort((a, b) => a[1] - b[1]).slice(0, 220);
+    for (const [staleKey] of oldest) {
+        runtimeEventDedup.delete(staleKey);
+        eventFeedCursorCache.delete(staleKey);
+    }
+}
+function safeJsonParse(input) {
+    if (typeof input !== "string" || input.trim().length === 0) {
+        return undefined;
+    }
+    try {
+        return JSON.parse(input);
+    }
+    catch {
+        return undefined;
+    }
+}
+async function inspectOpenClawSources(paths) {
+    const report = {
+        totalConfigured: paths.length,
+        existing: [],
+        missing: [],
+        directories: []
+    };
+    for (const sourcePath of paths) {
+        try {
+            const details = await stat(sourcePath);
+            if (details.isDirectory()) {
+                report.directories.push(sourcePath);
+            }
+            else {
+                report.existing.push(sourcePath);
+            }
+        }
+        catch {
+            report.missing.push(sourcePath);
+        }
+    }
+    return report;
 }
 function normalizeRuntimePayload(payload) {
     if (Array.isArray(payload)) {
@@ -645,7 +1039,7 @@ function normalizeRuntimePayload(payload) {
     }
     return [];
 }
-function buildRuntimeEvent(record, endpoint) {
+function buildRuntimeEvent(record, endpoint, connectorId = "openclaw-runtime") {
     const eventType = inferOpenClawRuntimeEventType(record);
     if (!eventType) {
         return undefined;
@@ -666,10 +1060,10 @@ function buildRuntimeEvent(record, endpoint) {
         timestamp,
         payload: {
             ...record,
-            sourceSystem: "openclaw-runtime"
+            sourceSystem: connectorId
         },
         source: {
-            connectorId: "openclaw-runtime",
+            connectorId,
             objectPath: endpoint
         },
         confidence: typeof confidenceRaw === "number" ? clamp(confidenceRaw) : 0.78,
@@ -746,9 +1140,12 @@ function runtimeView() {
     return {
         enabled: runtime.enabled,
         mode: runtime.mode,
+        transport: runtime.transport,
         endpoint: runtime.endpoint,
         hasApiKey: Boolean(runtime.apiKey),
         cursor: runtime.cursor,
+        cliCommand: runtime.cliCommand,
+        cliTimeoutMs: runtime.cliTimeoutMs,
         lastSyncAt: runtime.lastSyncAt,
         lastError: runtime.lastError,
         lastEventCount: runtime.lastEventCount
@@ -898,7 +1295,7 @@ async function hydrateFromStateFile() {
             if (Array.isArray(parsed.sources.customJsonSources))
                 sources.customJsonSources = uniq(parsed.sources.customJsonSources.map((item) => path.resolve(String(item))));
             if (Array.isArray(parsed.sources.openClawSources))
-                sources.openClawSources = uniq(parsed.sources.openClawSources.map((item) => path.resolve(String(item))));
+                sources.openClawSources = await normalizeOpenClawSourcePaths(uniq(parsed.sources.openClawSources.map((item) => path.resolve(String(item)))));
         }
         if (parsed.pluginEnabled && typeof parsed.pluginEnabled === "object") {
             for (const plugin of Object.keys(pluginEnabled)) {
@@ -927,7 +1324,7 @@ async function hydrateFromStateFile() {
                         ? uniq(parsed.setup.discoveredSources.customJsonLogPaths.map((item) => path.resolve(String(item))))
                         : setup.discoveredSources.customJsonLogPaths,
                     openClawLogPaths: Array.isArray(parsed.setup.discoveredSources.openClawLogPaths)
-                        ? uniq(parsed.setup.discoveredSources.openClawLogPaths.map((item) => path.resolve(String(item))))
+                        ? await normalizeOpenClawSourcePaths(uniq(parsed.setup.discoveredSources.openClawLogPaths.map((item) => path.resolve(String(item)))))
                         : setup.discoveredSources.openClawLogPaths
                 };
             }
@@ -938,9 +1335,12 @@ async function hydrateFromStateFile() {
         if (parsed.runtime && typeof parsed.runtime === "object") {
             runtime.enabled = toBool(parsed.runtime.enabled) ?? runtime.enabled;
             runtime.mode = normalizeRuntimeMode(parsed.runtime.mode ?? runtime.mode);
+            runtime.transport = normalizeRuntimeTransport(parsed.runtime.transport ?? runtime.transport);
             runtime.endpoint = text(parsed.runtime.endpoint) ?? runtime.endpoint;
             runtime.apiKey = text(parsed.runtime.apiKey) ?? runtime.apiKey;
             runtime.cursor = text(parsed.runtime.cursor) ?? runtime.cursor;
+            runtime.cliCommand = text(parsed.runtime.cliCommand) ?? runtime.cliCommand;
+            runtime.cliTimeoutMs = num(parsed.runtime.cliTimeoutMs) ?? runtime.cliTimeoutMs;
             runtime.lastSyncAt = text(parsed.runtime.lastSyncAt);
             runtime.lastError = text(parsed.runtime.lastError);
             runtime.lastEventCount = num(parsed.runtime.lastEventCount) ?? runtime.lastEventCount;
@@ -960,6 +1360,9 @@ async function hydrateFromStateFile() {
                 });
             }
         }
+        if (parsed.highRiskNotifications && typeof parsed.highRiskNotifications === "object") {
+            highRiskEngine.replaceState(parsed.highRiskNotifications);
+        }
         setup.runtime = runtimeView();
     }
     catch {
@@ -967,7 +1370,7 @@ async function hydrateFromStateFile() {
 }
 function statePayload(reason) {
     return {
-        version: 2,
+        version: 4,
         reason,
         updatedAt: new Date().toISOString(),
         workspaceId,
@@ -992,14 +1395,18 @@ function statePayload(reason) {
         runtime: {
             enabled: runtime.enabled,
             mode: runtime.mode,
+            transport: runtime.transport,
             endpoint: runtime.endpoint,
             apiKey: runtime.apiKey,
             cursor: runtime.cursor,
+            cliCommand: runtime.cliCommand,
+            cliTimeoutMs: runtime.cliTimeoutMs,
             lastSyncAt: runtime.lastSyncAt,
             lastError: runtime.lastError,
             lastEventCount: runtime.lastEventCount
         },
-        alertOverrides: Object.fromEntries(alertOverrides.entries())
+        alertOverrides: Object.fromEntries(alertOverrides.entries()),
+        highRiskNotifications: highRiskEngine.exportState()
     };
 }
 async function persistState(reason) {
@@ -1007,6 +1414,88 @@ async function persistState(reason) {
     const parent = path.dirname(stateFilePath);
     await mkdir(parent, { recursive: true });
     await writeFile(stateFilePath, JSON.stringify(payload, null, 2), "utf8");
+}
+function scheduleStatePersist(reason = "state.mutation") {
+    if (scheduledPersistTimer) {
+        return;
+    }
+    scheduledPersistTimer = setTimeout(async () => {
+        scheduledPersistTimer = undefined;
+        try {
+            await persistState(reason);
+        }
+        catch {
+        }
+    }, 200);
+}
+function applyHighRiskEnvDefaults() {
+    const settingsPatch = {};
+    const minSeverity = text(process.env.THEIA_HIGHRISK_MIN_SEVERITY);
+    if (minSeverity && ["medium", "high", "critical"].includes(minSeverity)) {
+        settingsPatch.minimumSeverity = minSeverity;
+    }
+    const minConfidence = num(process.env.THEIA_HIGHRISK_MIN_CONFIDENCE);
+    if (typeof minConfidence === "number") {
+        settingsPatch.minimumConfidence = clamp(minConfidence);
+    }
+    const channelsPatch = {};
+    const inApp = toBool(process.env.THEIA_HIGHRISK_CHANNEL_INAPP);
+    const email = toBool(process.env.THEIA_HIGHRISK_CHANNEL_EMAIL);
+    const webhook = toBool(process.env.THEIA_HIGHRISK_CHANNEL_WEBHOOK);
+    if (typeof inApp === "boolean")
+        channelsPatch.inAppBanner = inApp;
+    if (typeof email === "boolean")
+        channelsPatch.email = email;
+    if (typeof webhook === "boolean")
+        channelsPatch.webhook = webhook;
+    if (Object.keys(channelsPatch).length > 0) {
+        settingsPatch.channels = channelsPatch;
+    }
+    const emailPatch = {};
+    const smtpHost = text(process.env.THEIA_HIGHRISK_EMAIL_SMTP_HOST);
+    if (smtpHost)
+        emailPatch.smtpHost = smtpHost;
+    const smtpPort = num(process.env.THEIA_HIGHRISK_EMAIL_SMTP_PORT);
+    if (typeof smtpPort === "number")
+        emailPatch.smtpPort = smtpPort;
+    const smtpUser = text(process.env.THEIA_HIGHRISK_EMAIL_SMTP_USERNAME);
+    if (smtpUser)
+        emailPatch.smtpUsername = smtpUser;
+    if (typeof process.env.THEIA_HIGHRISK_EMAIL_SMTP_PASSWORD === "string") {
+        emailPatch.smtpPassword = process.env.THEIA_HIGHRISK_EMAIL_SMTP_PASSWORD;
+    }
+    const fromAddress = text(process.env.THEIA_HIGHRISK_EMAIL_FROM);
+    if (fromAddress)
+        emailPatch.fromAddress = fromAddress;
+    const subjectPrefix = text(process.env.THEIA_HIGHRISK_EMAIL_SUBJECT_PREFIX);
+    if (subjectPrefix)
+        emailPatch.subjectPrefix = subjectPrefix;
+    if (Object.keys(emailPatch).length > 0) {
+        settingsPatch.email = emailPatch;
+    }
+    const webhookPatch = {};
+    const webhookUrl = text(process.env.THEIA_HIGHRISK_WEBHOOK_URL);
+    if (webhookUrl)
+        webhookPatch.url = webhookUrl;
+    if (typeof process.env.THEIA_HIGHRISK_WEBHOOK_BEARER_TOKEN === "string") {
+        webhookPatch.bearerToken = process.env.THEIA_HIGHRISK_WEBHOOK_BEARER_TOKEN;
+    }
+    if (Object.keys(webhookPatch).length > 0) {
+        settingsPatch.webhook = webhookPatch;
+    }
+    const routingPatch = {};
+    const defaultRecipients = parseList(process.env.THEIA_HIGHRISK_EMAIL_RECIPIENTS ?? "");
+    const criticalRecipients = parseList(process.env.THEIA_HIGHRISK_CRITICAL_RECIPIENTS ?? "");
+    if (defaultRecipients.length > 0)
+        routingPatch.defaultRecipients = defaultRecipients;
+    if (criticalRecipients.length > 0)
+        routingPatch.criticalRecipients = criticalRecipients;
+    if (Object.keys(routingPatch).length > 0) {
+        settingsPatch.routing = routingPatch;
+    }
+    if (Object.keys(settingsPatch).length > 0) {
+        highRiskEngine.updateSettings(settingsPatch);
+    }
 }
 function parseList(value) {
     return uniq(value.split(",").map((x) => x.trim()).filter(Boolean));
@@ -1030,6 +1519,18 @@ function normalizeRuntimeMode(value) {
     if (normalized === "log_only" || normalized === "rpc_only" || normalized === "hybrid")
         return normalized;
     return "hybrid";
+}
+function normalizeRuntimeTransport(value) {
+    const normalized = text(value)?.toLowerCase();
+    if (!normalized)
+        return "gateway_cli";
+    if (normalized === "gateway_cli" || normalized === "event_feed") {
+        return normalized;
+    }
+    if (normalized === "cli") {
+        return "gateway_cli";
+    }
+    return "gateway_cli";
 }
 function uniq(values) {
     return [...new Set(values)];
@@ -1057,6 +1558,31 @@ async function isDir(target) {
     catch {
         return false;
     }
+}
+async function normalizeOpenClawSourcePaths(paths) {
+    const normalized = [];
+    for (const sourcePath of paths) {
+        const absolute = path.resolve(sourcePath);
+        const extension = path.extname(absolute).toLowerCase();
+        const inOpenClawSessions = absolute.toLowerCase().includes(`${path.sep}.openclaw${path.sep}agents${path.sep}`.toLowerCase()) &&
+            absolute.toLowerCase().includes(`${path.sep}sessions${path.sep}`);
+        if (extension === ".jsonl" && inOpenClawSessions) {
+            normalized.push(path.dirname(absolute));
+            continue;
+        }
+        if (await exists(absolute)) {
+            normalized.push(absolute);
+            continue;
+        }
+        const parentDir = path.dirname(absolute);
+        const parentExists = await isDir(parentDir);
+        if (parentExists && extension === ".jsonl") {
+            normalized.push(parentDir);
+            continue;
+        }
+        normalized.push(absolute);
+    }
+    return uniq(normalized);
 }
 function isApproved(target) {
     const absolute = path.resolve(target);
@@ -1087,6 +1613,9 @@ async function discover(workspacePath) {
             const absolute = path.join(current.dir, entry.name);
             const lower = entry.name.toLowerCase();
             if (entry.isDirectory()) {
+                if (lower === "sessions" && absolute.toLowerCase().includes(`${path.sep}.openclaw${path.sep}agents${path.sep}`.toLowerCase())) {
+                    openclawLogs.push(absolute);
+                }
                 if (current.depth < 6 && !ignored.has(lower))
                     queue.push({ dir: absolute, depth: current.depth + 1 });
                 continue;
@@ -1099,6 +1628,8 @@ async function discover(workspacePath) {
                 bootstrapPaths.push(absolute);
             else if (lower.includes("codex") || lower.includes("theia-desktop-dev"))
                 codexLogs.push(absolute);
+            else if (path.extname(lower) === ".jsonl" && absolute.toLowerCase().includes(`${path.sep}.openclaw${path.sep}agents${path.sep}`.toLowerCase()))
+                openclawLogs.push(path.dirname(absolute));
             else if (["openclaw", "trajectory", "trace", "rollout", "episode"].some((k) => lower.includes(k)))
                 openclawLogs.push(absolute);
             else if (path.extname(lower) === ".json" && ["workflow", "agent", "session", "event", "trace"].some((k) => lower.includes(k)))
@@ -1244,20 +1775,141 @@ function summarizeRun(run, events) {
         lastEventAt: runEvents[runEvents.length - 1]?.timestamp
     };
 }
-function buildMetrics(agents, runs, alerts, tokenSeries, connectorHealth, plugins, memoryRows) {
+function buildMetrics(agents, runs, alerts, tokenSeries, connectorHealth, plugins, memoryRows, notificationCenter) {
     const tokens = tokenSeries.reduce((sum, point) => sum + point.totalTokens, 0);
     const runningRuns = runs.filter((run) => run.status === "running").length;
     const activeAgents = agents.filter((agent) => agent.status === "running").length;
     const critical = alerts.filter((alert) => alert.severity === "high" || alert.severity === "critical").length;
+    const highRiskOpen = (notificationCenter?.history ?? []).filter((row) => row.status === "open").length;
+    const highRiskP95 = notificationCenter?.slo?.measuredP95Ms ?? 0;
     return [
         { label: "Setup Status", value: setup.connected ? "Connected" : "Not connected", trend: setup.health.status },
         { label: "Active Agents", value: `${activeAgents}`, trend: `${agents.length} observed` },
         { label: "Running Runs", value: `${runningRuns}`, trend: `${runs.length} total` },
         { label: "24h Token Burn", value: tokens.toLocaleString(), trend: tokens > 0 ? "live telemetry" : "no token telemetry" },
         { label: "Open Alerts", value: `${alerts.length}`, trend: critical > 0 ? "high severity present" : "no high severity" },
+        { label: "High-Risk Notifications", value: `${highRiskOpen}`, trend: `p95 dispatch ${highRiskP95}ms` },
         { label: "Connector Health", value: `${Math.round(connectorHealth * 100)}%`, trend: `${plugins.filter((p) => p.enabled).length} enabled` },
         { label: "Memory Coverage", value: `${memoryRows.length}`, trend: memoryRows.length > 0 ? "mapped sections" : "no memory files" }
     ];
+}
+function buildOpenClawLive(events, runs, plugins) {
+    const runtimeState = runtimeView();
+    const connector = plugins.find((plugin) => plugin.pluginId === "openclaw-main");
+    const openClawEvents = [...events]
+        .filter((event) => {
+        const connectorId = text(event.source?.connectorId)?.toLowerCase() ?? "";
+        const objectPath = text(event.source?.objectPath)?.toLowerCase() ?? "";
+        return connectorId.includes("openclaw") || objectPath.includes("openclaw");
+    })
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    const latest = openClawEvents[0];
+    const recentFailures = openClawEvents
+        .slice(0, 24)
+        .filter((event) => event.eventType === "run.failed")
+        .filter((event) => {
+        const message = text(event.payload?.message)?.toLowerCase() ?? "";
+        return !message.includes("suppressed from run.failed noise");
+    }).length;
+    const activeRun = latest ? runs.find((run) => run.runId === latest.runId) : undefined;
+    const dashboardUrl = text(process.env.THEIA_OPENCLAW_DASHBOARD_URL) ?? "http://127.0.0.1:18789/";
+    const apiBaseUrl = text(process.env.THEIA_OPENCLAW_API_BASE_URL) ?? "http://localhost:18789/v1";
+    let connectionStatus = "offline";
+    let statusMessage = "OpenClaw connector is not enabled.";
+    const sourceHealth = openClawDiagnosticsState.sourceHealth ?? {
+        totalConfigured: sources.openClawSources.length,
+        existing: [],
+        missing: [],
+        directories: []
+    };
+    if (connector?.enabled) {
+        const gatewayRpcOk = Boolean(openClawDiagnosticsState.gateway?.rpc?.ok ?? openClawDiagnosticsState.gateway?.health?.healthy);
+        const hasReadableSource = sourceHealth.existing.length > 0 || sourceHealth.directories.length > 0;
+        if (runtime.enabled && runtime.mode !== "log_only") {
+            if (runtime.lastError) {
+                connectionStatus = "degraded";
+                statusMessage = runtime.lastError;
+            }
+            else if (gatewayRpcOk || runtime.lastSyncAt) {
+                connectionStatus = "connected";
+                statusMessage = runtime.transport === "gateway_cli"
+                    ? "OpenClaw runtime is connected via CLI diagnostics and gateway probes."
+                    : "OpenClaw runtime is connected via event-feed endpoint.";
+            }
+            else {
+                connectionStatus = "degraded";
+                statusMessage = "Runtime telemetry is enabled but has not synchronized yet.";
+            }
+        }
+        else if (connector.status === "healthy" && hasReadableSource) {
+            connectionStatus = "connected";
+            statusMessage = openClawEvents.length > 0
+                ? "Connected through approved OpenClaw log sources."
+                : "Connected to log sources. Waiting for OpenClaw activity.";
+        }
+        else if (connector.status === "degraded") {
+            connectionStatus = "degraded";
+            statusMessage = runtimeState.lastError ?? connector.syncHealth ?? "OpenClaw connector has a degraded sync state.";
+        }
+        else {
+            connectionStatus = "offline";
+            statusMessage = connector.syncHealth ?? "OpenClaw connector is enabled but currently offline.";
+        }
+        if (sourceHealth.missing.length > 0 && connectionStatus === "connected") {
+            connectionStatus = "degraded";
+            statusMessage = `${sourceHealth.missing.length} OpenClaw source path(s) are currently missing. The connector suppresses noisy failures and continues with healthy sources.`;
+        }
+        if (recentFailures >= 4 && connectionStatus === "connected") {
+            connectionStatus = "degraded";
+            statusMessage = `Recent OpenClaw connector failures detected (${recentFailures} in recent activity).`;
+        }
+    }
+    const recentActivity = openClawEvents.slice(0, 8).map((event) => ({
+        ts: event.timestamp,
+        eventType: event.eventType,
+        summary: summarize(event),
+        runId: event.runId,
+        agentId: event.agentId
+    }));
+    return {
+        connectionStatus,
+        statusMessage,
+        dashboardUrl,
+        apiBaseUrl,
+        gatewayCommand: "openclaw gateway --port 18789",
+        dashboardCommand: "openclaw dashboard",
+        statusCommand: "openclaw gateway status",
+        currentAgentId: latest?.agentId,
+        currentRunId: latest?.runId,
+        currentTask: text(latest?.payload?.task) ?? text(latest?.payload?.summary) ?? text(latest?.payload?.action),
+        currentObjective: activeRun?.objective,
+        lastEventAt: latest?.timestamp ?? runtimeState.lastSyncAt,
+        runtime: {
+            enabled: runtimeState.enabled,
+            mode: runtimeState.mode,
+            transport: runtimeState.transport,
+            endpoint: runtimeState.endpoint,
+            cliCommand: runtimeState.cliCommand,
+            cliTimeoutMs: runtimeState.cliTimeoutMs,
+            lastSyncAt: runtimeState.lastSyncAt,
+            lastError: runtimeState.lastError,
+            lastEventCount: runtimeState.lastEventCount
+        },
+        sourceHealth,
+        operations: {
+            gateway: openClawDiagnosticsState.gateway,
+            status: openClawDiagnosticsState.status,
+            health: openClawDiagnosticsState.health,
+            recentLogMeta: openClawDiagnosticsState.recentLogMeta
+        },
+        recentActivity,
+        reconnectHints: [
+            "Run `openclaw gateway --port 18789`, then confirm with `openclaw gateway status`.",
+            "Open the Control UI with `openclaw dashboard` or http://127.0.0.1:18789/.",
+            "If using gateway_cli mode, verify THEIA_OPENCLAW_CLI_COMMAND and local PATH access.",
+            "If using event_feed mode, verify THEIA runtime endpoint points to an event stream, not /v1 inference APIs."
+        ]
+    };
 }
 function groupMemoryDocs(rows) {
     const grouped = new Map();
