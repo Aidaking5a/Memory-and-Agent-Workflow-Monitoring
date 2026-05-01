@@ -23,8 +23,15 @@ export function OnboardingView({ data, onRefresh }: OnboardingViewProps) {
   const [openClawPaths, setOpenClawPaths] = useState(data.connection.discoveredSources.openClawLogPaths.join("\n"));
   const [runtimeEnabled, setRuntimeEnabled] = useState(data.connection.runtime.enabled);
   const [runtimeMode, setRuntimeMode] = useState<"hybrid" | "log_only" | "rpc_only">(data.connection.runtime.mode);
+  const [runtimeTransport, setRuntimeTransport] = useState<"gateway_cli" | "event_feed">(
+    data.connection.runtime.transport ?? "gateway_cli"
+  );
   const [runtimeEndpoint, setRuntimeEndpoint] = useState(data.connection.runtime.endpoint ?? "");
   const [runtimeApiKey, setRuntimeApiKey] = useState("");
+  const [runtimeCliCommand, setRuntimeCliCommand] = useState(
+    data.connection.runtime.cliCommand ?? (navigator.userAgent.includes("Windows") ? "openclaw.cmd" : "openclaw")
+  );
+  const [runtimeCliTimeoutMs, setRuntimeCliTimeoutMs] = useState(data.connection.runtime.cliTimeoutMs || 9000);
   const [connectionMethod, setConnectionMethod] = useState<"workspace_scan" | "manual_paths">(
     data.connection.connectionMethod === "workspace_scan" ? "workspace_scan" : "manual_paths"
   );
@@ -65,6 +72,18 @@ export function OnboardingView({ data, onRefresh }: OnboardingViewProps) {
       setFeedback({ level: "error", message: "Workspace path is required." });
       return;
     }
+    if (
+      runtimeEnabled &&
+      runtimeMode !== "log_only" &&
+      runtimeTransport === "event_feed" &&
+      runtimeEndpoint.trim().length === 0
+    ) {
+      setFeedback({
+        level: "error",
+        message: "Runtime endpoint is required when runtime transport is event_feed."
+      });
+      return;
+    }
     setBusy("connect");
     setFeedback(null);
     try {
@@ -83,8 +102,11 @@ export function OnboardingView({ data, onRefresh }: OnboardingViewProps) {
         runtime: {
           enabled: runtimeEnabled,
           mode: runtimeMode,
+          transport: runtimeTransport,
           endpoint: runtimeEndpoint.trim() || undefined,
-          apiKey: runtimeApiKey.trim() || undefined
+          apiKey: runtimeApiKey.trim() || undefined,
+          cliCommand: runtimeCliCommand.trim() || undefined,
+          cliTimeoutMs: runtimeCliTimeoutMs
         },
         pluginEnabled
       });
@@ -124,6 +146,14 @@ export function OnboardingView({ data, onRefresh }: OnboardingViewProps) {
         <p className="muted-note">
           Link your local workspace, review sources and permissions, then validate connector health before relying on
           dashboard insights.
+        </p>
+        <div className="action-list-inline" style={{ marginTop: "0.5rem" }}>
+          <code>{data.openClawLive.gatewayCommand}</code>
+          <code>{data.openClawLive.dashboardCommand}</code>
+          <code>{data.openClawLive.statusCommand}</code>
+        </div>
+        <p className="muted-note" style={{ marginTop: "0.5rem" }}>
+          Dashboard URL: {data.openClawLive.dashboardUrl} | API: {data.openClawLive.apiBaseUrl}
         </p>
         <div className="onboarding-grid">
           <label className="field-col">
@@ -176,10 +206,10 @@ export function OnboardingView({ data, onRefresh }: OnboardingViewProps) {
 
       <div className="panel-grid">
         <article className="panel">
-          <h3>OpenClaw Runtime RPC (Optional)</h3>
+          <h3>OpenClaw Runtime Telemetry (Optional)</h3>
           <p className="muted-note">
-            Use runtime mode for direct OpenClaw event pull without relying only on log files. Keep this disabled if you
-            only use local log ingestion.
+            Use gateway CLI transport for OpenClaw-native diagnostics and live status, or event-feed only when you own a
+            dedicated workflow stream endpoint.
           </p>
           <label className="field-check">
             <input checked={runtimeEnabled} onChange={(event) => setRuntimeEnabled(event.currentTarget.checked)} type="checkbox" />
@@ -194,12 +224,39 @@ export function OnboardingView({ data, onRefresh }: OnboardingViewProps) {
             </select>
           </label>
           <label className="field-col">
-            <span>Runtime endpoint URL</span>
-            <input placeholder="http://localhost:7001/events" value={runtimeEndpoint} onChange={(event) => setRuntimeEndpoint(event.currentTarget.value)} />
+            <span>Runtime transport</span>
+            <select
+              value={runtimeTransport}
+              onChange={(event) => setRuntimeTransport(event.currentTarget.value as "gateway_cli" | "event_feed")}
+            >
+              <option value="gateway_cli">gateway_cli (recommended for OpenClaw)</option>
+              <option value="event_feed">event_feed (custom workflow stream)</option>
+            </select>
+          </label>
+          <label className="field-col">
+            <span>Runtime endpoint URL (event_feed only)</span>
+            <input
+              placeholder="http://localhost:7001/events"
+              value={runtimeEndpoint}
+              onChange={(event) => setRuntimeEndpoint(event.currentTarget.value)}
+            />
           </label>
           <label className="field-col">
             <span>Runtime API key (optional)</span>
             <input placeholder="Bearer token value" value={runtimeApiKey} onChange={(event) => setRuntimeApiKey(event.currentTarget.value)} />
+          </label>
+          <label className="field-col">
+            <span>OpenClaw CLI command</span>
+            <input value={runtimeCliCommand} onChange={(event) => setRuntimeCliCommand(event.currentTarget.value)} />
+          </label>
+          <label className="field-col">
+            <span>OpenClaw CLI timeout (ms)</span>
+            <input
+              type="number"
+              min={2000}
+              value={runtimeCliTimeoutMs}
+              onChange={(event) => setRuntimeCliTimeoutMs(Number(event.currentTarget.value))}
+            />
           </label>
           {data.connection.runtime.hasApiKey ? <p className="muted-note">An existing runtime API key is already stored locally.</p> : null}
         </article>

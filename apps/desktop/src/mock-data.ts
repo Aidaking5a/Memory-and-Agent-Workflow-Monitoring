@@ -35,7 +35,10 @@ export const emptyDashboardData: DashboardData = {
     runtime: {
       enabled: false,
       mode: "hybrid",
+      transport: "gateway_cli",
       hasApiKey: false,
+      cliCommand: "openclaw",
+      cliTimeoutMs: 9000,
       lastEventCount: 0
     }
   },
@@ -67,6 +70,88 @@ export const emptyDashboardData: DashboardData = {
   audit: [],
   connectors: [],
   plugins: [],
+  notificationCenter: {
+    settings: {
+      enabled: true,
+      minimumSeverity: "high",
+      minimumConfidence: 0.7,
+      dedupeWindowSeconds: 120,
+      cooldownSeconds: 90,
+      antiSpamWindowSeconds: 300,
+      maxNotificationsPerWindow: 14,
+      channels: {
+        inAppBanner: true,
+        email: false,
+        webhook: false
+      },
+      quietHours: {
+        enabled: false,
+        startLocal: "22:00",
+        endLocal: "07:00",
+        allowCritical: true
+      },
+      retry: {
+        maxAttempts: 3,
+        baseDelayMs: 350,
+        maxDelayMs: 2500
+      },
+      routing: {
+        defaultRecipients: [],
+        criticalRecipients: []
+      },
+      escalation: {
+        enabled: true,
+        severityAtLeast: "critical",
+        afterMinutes: 5,
+        additionalRecipients: [],
+        escalateToWebhook: false
+      },
+      email: {
+        fromAddress: "alerts@theia.local",
+        smtpPort: 587,
+        secure: false,
+        connectTimeoutMs: 7000,
+        subjectPrefix: "[THEIA HIGH-RISK]",
+        configured: false,
+        hasPassword: false
+      },
+      webhook: {
+        timeoutMs: 3500,
+        configured: false,
+        hasBearerToken: false
+      },
+      slo: {
+        p95DispatchTargetMs: 1200
+      }
+    },
+    taxonomy: [],
+    history: [],
+    pipeline: {
+      detected: 0,
+      dispatched: 0,
+      suppressed: 0,
+      suppressedBreakdown: {
+        dispatched: 0,
+        filtered_threshold: 0,
+        suppressed_dedupe: 0,
+        suppressed_cooldown: 0,
+        suppressed_rate_limit: 0,
+        quiet_hours: 0,
+        disabled: 0
+      },
+      averageDetectionMs: 0,
+      p95DetectionMs: 0
+    },
+    slo: {
+      targetP95Ms: 1200,
+      measuredP95Ms: 0,
+      measuredP50Ms: 0,
+      sampleSize: 0,
+      withinTarget: true,
+      queueDepth: 0,
+      failedDeliveryCount24h: 0
+    }
+  },
   workflowCandidates: [],
   workflowReport: {
     totalCandidates: 0,
@@ -91,6 +176,36 @@ export const emptyDashboardData: DashboardData = {
     minEvidencePacketCount: 2,
     minSafeAutomationEvidenceCount: 0,
     requireHumanApprovalForHighImpact: true
+  },
+  openClawLive: {
+    connectionStatus: "offline",
+    statusMessage: "OpenClaw connector is not enabled yet.",
+    dashboardUrl: "http://127.0.0.1:18789/",
+    apiBaseUrl: "http://localhost:18789/v1",
+    gatewayCommand: "openclaw gateway --port 18789",
+    dashboardCommand: "openclaw dashboard",
+    statusCommand: "openclaw gateway status",
+    runtime: {
+      enabled: false,
+      mode: "hybrid",
+      transport: "gateway_cli",
+      cliCommand: "openclaw",
+      cliTimeoutMs: 9000,
+      lastEventCount: 0
+    },
+    sourceHealth: {
+      totalConfigured: 0,
+      existing: [],
+      missing: [],
+      directories: []
+    },
+    operations: {},
+    recentActivity: [],
+    reconnectHints: [
+      "Run openclaw gateway --port 18789 and confirm with openclaw gateway status.",
+      "Open the dashboard with openclaw dashboard.",
+      "Enable runtime endpoint in OpenClaw setup only after validating token/auth settings."
+    ]
   },
   ingestSummary: {
     latestEventCount: 0,

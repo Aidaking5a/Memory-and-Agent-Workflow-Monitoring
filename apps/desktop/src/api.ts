@@ -74,6 +74,23 @@ async function postJson<TResponse>(path: string, body: Record<string, unknown>):
   return (await response.json()) as TResponse;
 }
 
+async function putJson<TResponse>(path: string, body: Record<string, unknown>): Promise<TResponse> {
+  const response = await fetch(`${coreBaseUrl()}${path}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...operatorHeaders()
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return (await response.json()) as TResponse;
+}
+
 export async function loadDashboardData(): Promise<DashboardData> {
   try {
     const response = await fetch(`${coreBaseUrl()}/dashboard/snapshot`, {
@@ -82,7 +99,51 @@ export async function loadDashboardData(): Promise<DashboardData> {
     if (!response.ok) {
       throw new Error(await readErrorMessage(response));
     }
-    return (await response.json()) as DashboardData;
+    const payload = (await response.json()) as Partial<DashboardData>;
+    const connection = (payload.connection ?? {}) as Partial<DashboardData["connection"]>;
+    const openClawLive = (payload.openClawLive ?? {}) as Partial<DashboardData["openClawLive"]>;
+    return {
+      ...emptyDashboardData,
+      ...payload,
+      connection: {
+        ...emptyDashboardData.connection,
+        ...connection,
+        discoveredSources: {
+          ...emptyDashboardData.connection.discoveredSources,
+          ...(connection.discoveredSources ?? {})
+        },
+        permissions: {
+          ...emptyDashboardData.connection.permissions,
+          ...(connection.permissions ?? {})
+        },
+        health: {
+          ...emptyDashboardData.connection.health,
+          ...(connection.health ?? {})
+        },
+        runtime: {
+          ...emptyDashboardData.connection.runtime,
+          ...(connection.runtime ?? {})
+        }
+      },
+      openClawLive: {
+        ...emptyDashboardData.openClawLive,
+        ...openClawLive,
+        runtime: {
+          ...emptyDashboardData.openClawLive.runtime,
+          ...(openClawLive.runtime ?? {})
+        },
+        sourceHealth: {
+          ...emptyDashboardData.openClawLive.sourceHealth,
+          ...(openClawLive.sourceHealth ?? {})
+        },
+        operations: {
+          ...emptyDashboardData.openClawLive.operations,
+          ...(openClawLive.operations ?? {})
+        }
+      },
+      operator: { ...emptyDashboardData.operator, ...(payload.operator ?? {}) },
+      notificationCenter: payload.notificationCenter ?? emptyDashboardData.notificationCenter
+    };
   } catch (error) {
     return {
       ...emptyDashboardData,
@@ -126,8 +187,11 @@ export async function connectOpenClawWorkspace(input: {
   runtime?: {
     enabled: boolean;
     mode: "hybrid" | "log_only" | "rpc_only";
+    transport: "gateway_cli" | "event_feed";
     endpoint?: string;
     apiKey?: string;
+    cliCommand?: string;
+    cliTimeoutMs?: number;
   };
   pluginEnabled: Record<string, boolean>;
 }): Promise<void> {
@@ -150,6 +214,23 @@ export async function updateAlertStatus(
   await postJson(`/alerts/${encodeURIComponent(alertId)}/status`, {
     status,
     note
+  });
+}
+
+export async function updateHighRiskNotificationSettings(input: Record<string, unknown>): Promise<void> {
+  await putJson("/notifications/high-risk/settings", input);
+}
+
+export async function sendHighRiskNotificationTest(input: Record<string, unknown> = {}): Promise<void> {
+  await postJson("/notifications/high-risk/test", input);
+}
+
+export async function updateHighRiskNotificationStatus(
+  notificationId: string,
+  status: "open" | "acknowledged" | "resolved"
+): Promise<void> {
+  await postJson(`/notifications/high-risk/${encodeURIComponent(notificationId)}/status`, {
+    status
   });
 }
 

@@ -1,5 +1,6 @@
 export type ViewKey =
   | "onboarding"
+  | "openclaw"
   | "overview"
   | "agents"
   | "timeline"
@@ -61,9 +62,12 @@ export interface SetupState {
   runtime: {
     enabled: boolean;
     mode: "hybrid" | "log_only" | "rpc_only";
+    transport: "gateway_cli" | "event_feed";
     endpoint?: string;
     hasApiKey: boolean;
     cursor?: string;
+    cliCommand?: string;
+    cliTimeoutMs: number;
     lastSyncAt?: string;
     lastError?: string;
     lastEventCount: number;
@@ -145,6 +149,155 @@ export interface AlertItem {
   createdAt: string;
   updatedAt?: string;
   evidenceCount: number;
+}
+
+export type HighRiskSeverity = "medium" | "high" | "critical";
+export type HighRiskNotificationChannel = "in_app_banner" | "email" | "webhook";
+export type HighRiskNotificationDeliveryStatus = "queued" | "retrying" | "sent" | "failed" | "suppressed";
+export type HighRiskNotificationStatus = "open" | "acknowledged" | "resolved";
+export type HighRiskDedupeStatus =
+  | "dispatched"
+  | "filtered_threshold"
+  | "suppressed_dedupe"
+  | "suppressed_cooldown"
+  | "suppressed_rate_limit"
+  | "quiet_hours"
+  | "disabled";
+
+export interface HighRiskNotificationChannelState {
+  channel: HighRiskNotificationChannel;
+  status: HighRiskNotificationDeliveryStatus;
+  attempts: number;
+  queuedAt?: string;
+  lastAttemptAt?: string;
+  sentAt?: string;
+  latencyMs?: number;
+  lastError?: string;
+  nextRetryAt?: string;
+}
+
+export interface HighRiskNotificationRecord {
+  notificationId: string;
+  riskId: string;
+  sourceEventId: string;
+  sourceEventType: string;
+  category: string;
+  severity: HighRiskSeverity;
+  confidence: number;
+  triggerRule: string;
+  title: string;
+  explanation: string;
+  recommendedNextAction: string;
+  dedupeStatus: HighRiskDedupeStatus;
+  suppressionReason?: string;
+  agentId: string;
+  runId: string;
+  affectedResource?: string;
+  toolName?: string;
+  occurredAt: string;
+  detectedAt: string;
+  status: HighRiskNotificationStatus;
+  acknowledgedAt?: string;
+  resolvedAt?: string;
+  escalatedAt?: string;
+  channels: HighRiskNotificationChannelState[];
+  signals: string[];
+  firstDispatchedAt?: string;
+  firstDispatchLatencyMs?: number;
+  pipeline: Array<{
+    stage: string;
+    at: string;
+    detail: string;
+  }>;
+}
+
+export interface HighRiskNotificationSettingsView {
+  enabled: boolean;
+  minimumSeverity: HighRiskSeverity;
+  minimumConfidence: number;
+  dedupeWindowSeconds: number;
+  cooldownSeconds: number;
+  antiSpamWindowSeconds: number;
+  maxNotificationsPerWindow: number;
+  channels: {
+    inAppBanner: boolean;
+    email: boolean;
+    webhook: boolean;
+  };
+  quietHours: {
+    enabled: boolean;
+    startLocal: string;
+    endLocal: string;
+    allowCritical: boolean;
+  };
+  retry: {
+    maxAttempts: number;
+    baseDelayMs: number;
+    maxDelayMs: number;
+  };
+  routing: {
+    defaultRecipients: string[];
+    criticalRecipients: string[];
+  };
+  escalation: {
+    enabled: boolean;
+    severityAtLeast: "high" | "critical";
+    afterMinutes: number;
+    additionalRecipients: string[];
+    escalateToWebhook: boolean;
+  };
+  email: {
+    fromAddress: string;
+    smtpHost?: string;
+    smtpPort: number;
+    secure: boolean;
+    smtpUsername?: string;
+    connectTimeoutMs: number;
+    subjectPrefix: string;
+    configured: boolean;
+    hasPassword: boolean;
+  };
+  webhook: {
+    url?: string;
+    timeoutMs: number;
+    configured: boolean;
+    hasBearerToken: boolean;
+  };
+  slo: {
+    p95DispatchTargetMs: number;
+  };
+}
+
+export interface HighRiskNotificationTaxonomyRule {
+  category: string;
+  label: string;
+  trigger: string;
+  defaultSeverity: HighRiskSeverity;
+}
+
+export interface NotificationCenterData {
+  settings: HighRiskNotificationSettingsView;
+  taxonomy: HighRiskNotificationTaxonomyRule[];
+  history: HighRiskNotificationRecord[];
+  banner?: HighRiskNotificationRecord;
+  pipeline: {
+    detected: number;
+    dispatched: number;
+    suppressed: number;
+    suppressedBreakdown: Record<HighRiskDedupeStatus, number>;
+    averageDetectionMs: number;
+    p95DetectionMs: number;
+  };
+  slo: {
+    targetP95Ms: number;
+    measuredP95Ms: number;
+    measuredP50Ms: number;
+    sampleSize: number;
+    withinTarget: boolean;
+    lastDispatchAt?: string;
+    queueDepth: number;
+    failedDeliveryCount24h: number;
+  };
 }
 
 export interface OperatorContext {
@@ -256,6 +409,54 @@ export interface WorkflowPolicyView {
   requireHumanApprovalForHighImpact: boolean;
 }
 
+export interface OpenClawLiveActivity {
+  ts: string;
+  eventType: string;
+  summary: string;
+  runId: string;
+  agentId: string;
+}
+
+export interface OpenClawLiveView {
+  connectionStatus: "connected" | "degraded" | "offline";
+  statusMessage: string;
+  dashboardUrl: string;
+  apiBaseUrl: string;
+  gatewayCommand: string;
+  dashboardCommand: string;
+  statusCommand: string;
+  currentAgentId?: string;
+  currentRunId?: string;
+  currentTask?: string;
+  currentObjective?: string;
+  lastEventAt?: string;
+  runtime: {
+    enabled: boolean;
+    mode: "hybrid" | "log_only" | "rpc_only";
+    transport: "gateway_cli" | "event_feed";
+    endpoint?: string;
+    cliCommand?: string;
+    cliTimeoutMs: number;
+    lastSyncAt?: string;
+    lastError?: string;
+    lastEventCount: number;
+  };
+  sourceHealth: {
+    totalConfigured: number;
+    existing: string[];
+    missing: string[];
+    directories: string[];
+  };
+  operations: {
+    gateway?: Record<string, unknown>;
+    status?: Record<string, unknown>;
+    health?: Record<string, unknown>;
+    recentLogMeta?: Record<string, unknown>;
+  };
+  recentActivity: OpenClawLiveActivity[];
+  reconnectHints: string[];
+}
+
 export interface DashboardData {
   generatedAt: string;
   workspaceId: string;
@@ -278,9 +479,11 @@ export interface DashboardData {
   audit: AuditRow[];
   connectors: ConnectorRow[];
   plugins: PluginRow[];
+  notificationCenter: NotificationCenterData;
   workflowCandidates: WorkflowCandidateRow[];
   workflowReport: WorkflowReleaseGateSummary;
   workflowPolicy: WorkflowPolicyView;
+  openClawLive: OpenClawLiveView;
   ingestSummary: {
     latestEventCount: number;
     latestMemoryObjects: number;
