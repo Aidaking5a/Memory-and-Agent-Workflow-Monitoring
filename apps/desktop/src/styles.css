@@ -893,6 +893,19 @@ tbody tr:hover {
   border-top: 1px solid #292932;
 }
 
+.token-block {
+  display: block;
+  margin-top: 0.4rem;
+  border: 1px solid rgba(255, 90, 95, 0.5);
+  border-radius: 10px;
+  background: #0a0a0f;
+  color: #ffd7d7;
+  padding: 0.55rem 0.62rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1024px) {
   .topbar {
     grid-template-columns: 1fr;

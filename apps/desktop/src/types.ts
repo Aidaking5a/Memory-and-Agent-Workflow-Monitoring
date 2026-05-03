@@ -444,6 +444,60 @@ export interface OpenClawLiveActivity {
   agentId: string;
 }
 
+export interface OpenClawTelemetryStateView {
+  transport: "poll" | "push" | "hybrid";
+  ingestEndpoint: string;
+  streamEndpoint: string;
+  activePairings: number;
+  totalPairings: number;
+  eventsStored: number;
+  latestEventAt?: string;
+  lastIngestAt?: string;
+  requestsAccepted: number;
+  requestsRejected: number;
+  dedupedEvents: number;
+}
+
+export interface OpenClawPairingCommands {
+  powershell: string[];
+  bash: string[];
+}
+
+export interface OpenClawPairingView {
+  pairingId: string;
+  label: string;
+  userId: string;
+  userEmail: string;
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt?: string;
+  revokedAt?: string;
+  revokedBy?: string;
+  active: boolean;
+}
+
+export interface OpenClawTelemetryEventRow {
+  id: string;
+  pairingId: string;
+  workspaceId: string;
+  userId: string;
+  userEmail: string;
+  sessionId?: string;
+  runId: string;
+  agentId: string;
+  taskId?: string;
+  eventType: string;
+  status: "ok" | "degraded" | "failed" | "stopped" | "waiting";
+  message: string;
+  timestamp: string;
+  source: "openclaw-hook" | "openclaw-plugin" | "openclaw-tool";
+  severity: "info" | "low" | "medium" | "high" | "critical";
+  confidence: number;
+  metadata: Record<string, unknown>;
+  signatureVersion: "v1";
+  ingestedAt: string;
+}
+
 export interface OpenClawLiveView {
   connectionStatus: "connected" | "degraded" | "offline";
   statusMessage: string;
@@ -482,6 +536,7 @@ export interface OpenClawLiveView {
     recentLogMeta?: Record<string, unknown>;
     emergencyState?: EmergencySafetyState;
   };
+  telemetry: OpenClawTelemetryStateView;
   recentActivity: OpenClawLiveActivity[];
   reconnectHints: string[];
 }

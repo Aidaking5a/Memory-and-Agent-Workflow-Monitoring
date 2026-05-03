@@ -208,6 +208,17 @@ export const emptyDashboardData: DashboardData = {
         restartAvailable: false
       }
     },
+    telemetry: {
+      transport: "poll",
+      ingestEndpoint: "http://localhost:4318/openclaw/telemetry/events",
+      streamEndpoint: "http://localhost:4318/openclaw/telemetry/stream",
+      activePairings: 0,
+      totalPairings: 0,
+      eventsStored: 0,
+      requestsAccepted: 0,
+      requestsRejected: 0,
+      dedupedEvents: 0
+    },
     recentActivity: [],
     reconnectHints: [
       "Run openclaw gateway --port 18789 and confirm with openclaw gateway status.",

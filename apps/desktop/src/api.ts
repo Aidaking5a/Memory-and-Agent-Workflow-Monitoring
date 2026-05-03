@@ -1,5 +1,13 @@
 import { emptyDashboardData } from "./mock-data";
-import type { AuthSessionPayload, DashboardData, OperatorRole, SetupState } from "./types";
+import type {
+  AuthSessionPayload,
+  DashboardData,
+  OpenClawPairingCommands,
+  OpenClawPairingView,
+  OpenClawTelemetryEventRow,
+  OperatorRole,
+  SetupState
+} from "./types";
 
 const DEFAULT_BASE_URL = "http://localhost:4318";
 const OPERATOR_ROLE_STORAGE_KEY = "theia.operator.role";
@@ -200,6 +208,10 @@ export async function loadDashboardData(): Promise<DashboardData> {
         operations: {
           ...emptyDashboardData.openClawLive.operations,
           ...(openClawLive.operations ?? {})
+        },
+        telemetry: {
+          ...emptyDashboardData.openClawLive.telemetry,
+          ...(openClawLive.telemetry ?? {})
         }
       },
       operator: { ...emptyDashboardData.operator, ...(payload.operator ?? {}) },
@@ -387,4 +399,140 @@ export async function restartGateway(resumeAutomation = true): Promise<void> {
   await postJson("/openclaw/restart-gateway", {
     resumeAutomation
   });
+}
+
+export async function createOpenClawPairing(input: {
+  label?: string;
+  ttlHours?: number;
+}): Promise<{
+  pairingId: string;
+  label: string;
+  expiresAt: string;
+  token: string;
+  telemetryEndpoint: string;
+  streamEndpoint: string;
+  commands: OpenClawPairingCommands;
+}> {
+  return postJson("/openclaw/pairings", input as Record<string, unknown>);
+}
+
+export async function listOpenClawPairings(): Promise<{
+  generatedAt: string;
+  pairings: OpenClawPairingView[];
+  endpoint: string;
+}> {
+  return getJson("/openclaw/pairings");
+}
+
+export async function revokeOpenClawPairing(pairingId: string): Promise<void> {
+  await postJson(`/openclaw/pairings/${encodeURIComponent(pairingId)}/revoke`, {});
+}
+
+export async function loadOpenClawTelemetryHistory(limit = 120): Promise<OpenClawTelemetryEventRow[]> {
+  const response = await getJson<{ rows?: OpenClawTelemetryEventRow[] }>(
+    `/openclaw/telemetry/history?limit=${encodeURIComponent(String(limit))}`
+  );
+  return Array.isArray(response?.rows) ? response.rows : [];
+}
+
+type SseEventName = "ready" | "snapshot" | "update" | "ping" | "message";
+
+function parseSseBlock(block: string): { event: SseEventName; data?: unknown } | null {
+  const lines = block
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+  let event: SseEventName = "message";
+  const dataLines: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith("event:")) {
+      const value = line.slice("event:".length).trim();
+      if (value === "ready" || value === "snapshot" || value === "update" || value === "ping") {
+        event = value;
+      }
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trim());
+    }
+  }
+  if (dataLines.length === 0) {
+    return { event };
+  }
+  try {
+    return {
+      event,
+      data: JSON.parse(dataLines.join("\n"))
+    };
+  } catch {
+    return {
+      event,
+      data: dataLines.join("\n")
+    };
+  }
+}
+
+export function subscribeOpenClawTelemetryStream(handlers: {
+  onReady?: (payload: unknown) => void;
+  onSnapshot?: (payload: unknown) => void;
+  onUpdate?: (payload: unknown) => void;
+  onError?: (error: Error) => void;
+}): () => void {
+  const controller = new AbortController();
+  let closed = false;
+
+  const run = async () => {
+    try {
+      const response = await fetch(`${coreBaseUrl()}/openclaw/telemetry/stream`, {
+        headers: {
+          Accept: "text/event-stream",
+          ...operatorHeaders()
+        },
+        signal: controller.signal
+      });
+      if (isAuthStatus(response.status)) {
+        throw new ApiAuthError(await readErrorMessage(response), response.status);
+      }
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response));
+      }
+      if (!response.body) {
+        throw new Error("Telemetry stream response body is empty.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      while (!closed) {
+        const result = await reader.read();
+        if (result.done) break;
+        buffer += decoder.decode(result.value, { stream: true });
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() ?? "";
+        for (const block of blocks) {
+          const parsed = parseSseBlock(block);
+          if (!parsed) continue;
+          if (parsed.event === "ready") {
+            handlers.onReady?.(parsed.data);
+          } else if (parsed.event === "snapshot") {
+            handlers.onSnapshot?.(parsed.data);
+          } else if (parsed.event === "update") {
+            handlers.onUpdate?.(parsed.data);
+          }
+        }
+      }
+    } catch (error) {
+      if (closed || controller.signal.aborted) {
+        return;
+      }
+      handlers.onError?.(error instanceof Error ? error : new Error("Telemetry stream failed."));
+    }
+  };
+
+  void run();
+  return () => {
+    closed = true;
+    controller.abort();
+  };
 }

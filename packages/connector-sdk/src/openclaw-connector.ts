@@ -159,24 +159,11 @@ export class OpenClawConnector implements Connector {
         }
         if (readResult.kind === "error") {
           this.lastHardError = readResult.errorMessage;
-          events.push({
-            eventId: `${this.manifest.connectorId}:error:${Date.now()}`,
-            workspaceId: this.options.scope.workspaceId,
-            agentId: this.config.defaultAgentId ?? "agent:openclaw",
-            runId: "run:openclaw",
-            eventType: "run.failed",
-            timestamp: this.options.context.now().toISOString(),
-            payload: {
-              message: "OpenClaw connector failed to read trace file",
-              filePath: sourceFile,
-              error: readResult.errorMessage
-            },
-            source: {
-              connectorId: this.manifest.connectorId,
-              filePath: sourceFile
-            },
-            confidence: 0.9,
-            evidenceRefs: []
+          this.markSourceIssue(sourceFile, readResult.errorMessage);
+          this.options.context.emitAudit("connector.openclaw.read_error", {
+            connectorId: this.manifest.connectorId,
+            sourceFile,
+            error: readResult.errorMessage
           });
           continue;
         }
@@ -383,15 +370,26 @@ export class OpenClawConnector implements Connector {
 
       const rawLines = newChunk.split(/\r?\n/);
       const trailing = rawLines.pop() ?? "";
-      this.partialLines.set(sourceFile, trailing);
+      let trailingCarry = trailing;
       this.cursors.set(sourceFile, content.length);
 
       const lines = rawLines.map((line) => line.trim()).filter(Boolean);
+      const trimmedTrailing = trailing.trim();
+      if (trimmedTrailing.length > 0) {
+        try {
+          JSON.parse(trimmedTrailing);
+          lines.push(trimmedTrailing);
+          trailingCarry = "";
+        } catch {
+          // Keep carrying non-JSON trailing fragments until newline arrives.
+        }
+      }
+      this.partialLines.set(sourceFile, trailingCarry);
       return { kind: "ok", lines };
     } catch (error) {
       const code = this.errorCode(error);
       const message = error instanceof Error ? error.message : "Unknown read error.";
-      if (code === "ENOENT") {
+      if (["ENOENT", "ENOTDIR", "EACCES", "EPERM", "EBUSY"].includes(code ?? "")) {
         return { kind: "missing", errorMessage: message };
       }
       return { kind: "error", errorMessage: message };

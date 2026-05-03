@@ -155,6 +155,10 @@ export function OnboardingView({ data, onRefresh }: OnboardingViewProps) {
         <p className="muted-note" style={{ marginTop: "0.5rem" }}>
           Dashboard URL: {data.openClawLive.dashboardUrl} | API: {data.openClawLive.apiBaseUrl}
         </p>
+        <p className="muted-note" style={{ marginTop: "0.35rem" }}>
+          Push telemetry endpoint: {data.openClawLive.telemetry.ingestEndpoint}. Create pairing tokens in OpenClaw
+          Operations after setup to let OpenClaw report activity directly into Theia.
+        </p>
         <div className="onboarding-grid">
           <label className="field-col">
             <span>Connection method</span>

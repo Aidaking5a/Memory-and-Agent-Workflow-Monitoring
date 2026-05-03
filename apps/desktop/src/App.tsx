@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ApiAuthError,
+  clearAuthSession,
   getAuthUserEmail,
   loadAuthProfile,
   loadDashboardData,
   logoutLocalAccount,
   signinLocalAccount,
-  signupLocalAccount
+  signupLocalAccount,
+  subscribeOpenClawTelemetryStream
 } from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
@@ -39,6 +41,35 @@ const VIEW_LABELS: Record<ViewKey, string> = {
   settings: "Settings and Connectors"
 };
 
+function mergeOpenClawLive(
+  current: DashboardData["openClawLive"],
+  incoming: Partial<DashboardData["openClawLive"]> | undefined
+): DashboardData["openClawLive"] {
+  if (!incoming) return current;
+  return {
+    ...current,
+    ...incoming,
+    runtime: {
+      ...current.runtime,
+      ...(incoming.runtime ?? {})
+    },
+    sourceHealth: {
+      ...current.sourceHealth,
+      ...(incoming.sourceHealth ?? {})
+    },
+    operations: {
+      ...current.operations,
+      ...(incoming.operations ?? {})
+    },
+    telemetry: {
+      ...current.telemetry,
+      ...(incoming.telemetry ?? {})
+    },
+    recentActivity: Array.isArray(incoming.recentActivity) ? incoming.recentActivity : current.recentActivity,
+    reconnectHints: Array.isArray(incoming.reconnectHints) ? incoming.reconnectHints : current.reconnectHints
+  };
+}
+
 export function App() {
   const [view, setView] = useState<ViewKey>("overview");
   const [data, setData] = useState<DashboardData>(emptyDashboardData);
@@ -48,6 +79,9 @@ export function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | undefined>(undefined);
   const [authEmail, setAuthEmail] = useState<string | null>(getAuthUserEmail());
+  const [openClawStreamStatus, setOpenClawStreamStatus] = useState<"idle" | "connecting" | "live" | "error">("idle");
+  const [openClawStreamMessage, setOpenClawStreamMessage] = useState<string | undefined>(undefined);
+  const [openClawStreamAttempt, setOpenClawStreamAttempt] = useState(0);
 
   const refreshData = useCallback(async () => {
     if (!authenticated) return;
@@ -119,6 +153,80 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [authenticated, refreshData]);
 
+  useEffect(() => {
+    if (!authenticated) {
+      setOpenClawStreamStatus("idle");
+      setOpenClawStreamMessage(undefined);
+      return;
+    }
+
+    setOpenClawStreamStatus("connecting");
+    setOpenClawStreamMessage("Connecting to OpenClaw live stream...");
+    let refreshTimer: number | undefined;
+    let reconnectTimer: number | undefined;
+    const scheduleRefresh = () => {
+      if (refreshTimer !== undefined) return;
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = undefined;
+        void refreshData();
+      }, 1200);
+    };
+
+    const unsubscribe = subscribeOpenClawTelemetryStream({
+      onReady: () => {
+        setOpenClawStreamStatus("live");
+        setOpenClawStreamMessage("OpenClaw stream connected.");
+      },
+      onSnapshot: (payload) => {
+        const snapshot = payload as { openClawLive?: Partial<DashboardData["openClawLive"]>; generatedAt?: string } | undefined;
+        if (!snapshot) return;
+        setData((previous) => ({
+          ...previous,
+          generatedAt: snapshot.generatedAt ?? previous.generatedAt,
+          openClawLive: mergeOpenClawLive(previous.openClawLive, snapshot.openClawLive)
+        }));
+      },
+      onUpdate: (payload) => {
+        const update = payload as {
+          snapshot?: { openClawLive?: Partial<DashboardData["openClawLive"]>; generatedAt?: string };
+        };
+        const snapshot = update?.snapshot;
+        if (snapshot?.openClawLive) {
+          setData((previous) => ({
+            ...previous,
+            generatedAt: snapshot.generatedAt ?? previous.generatedAt,
+            openClawLive: mergeOpenClawLive(previous.openClawLive, snapshot.openClawLive)
+          }));
+        }
+        scheduleRefresh();
+      },
+      onError: (error) => {
+        if (error instanceof ApiAuthError) {
+          clearAuthSession();
+          setAuthenticated(false);
+          setAuthEmail(null);
+          setAuthError("Session expired. Sign in again.");
+          return;
+        }
+        setOpenClawStreamStatus("error");
+        setOpenClawStreamMessage(error.message);
+        reconnectTimer = window.setTimeout(() => {
+          setOpenClawStreamAttempt((previous) => previous + 1);
+        }, 3000);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      if (refreshTimer !== undefined) {
+        window.clearTimeout(refreshTimer);
+      }
+      if (reconnectTimer !== undefined) {
+        window.clearTimeout(reconnectTimer);
+      }
+    };
+  }, [authenticated, openClawStreamAttempt, refreshData]);
+
   const handleSignIn = useCallback(async (email: string, password: string) => {
     setAuthBusy(true);
     setAuthError(undefined);
@@ -163,7 +271,15 @@ export function App() {
       case "overview":
         return <OverviewView data={data} onOpenClawOps={() => setView("openclaw")} />;
       case "openclaw":
-        return <OpenClawView data={data} onOpenSetup={() => setView("onboarding")} onRefresh={refreshData} />;
+        return (
+          <OpenClawView
+            data={data}
+            onOpenSetup={() => setView("onboarding")}
+            onRefresh={refreshData}
+            streamStatus={openClawStreamStatus}
+            streamMessage={openClawStreamMessage}
+          />
+        );
       case "agents":
         return <AgentsView data={data} />;
       case "timeline":
@@ -183,7 +299,7 @@ export function App() {
       default:
         return <OverviewView data={data} onOpenClawOps={() => setView("openclaw")} />;
     }
-  }, [data, isRefreshing, refreshData, view]);
+  }, [data, isRefreshing, openClawStreamMessage, openClawStreamStatus, refreshData, view]);
 
   if (!authReady) {
     return (

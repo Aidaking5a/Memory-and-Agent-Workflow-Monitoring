@@ -9,6 +9,7 @@ import { TheiaCore } from "./core.js";
 import { createHighRiskNotificationEngine } from "./high-risk-notifications.js";
 import { LocalAuthStore } from "./local-auth.js";
 import { OpsEmailNotifier } from "./ops-email.js";
+import { OpenClawTelemetryHub } from "./openclaw-telemetry.js";
 const execFileAsync = promisify(execFile);
 const workspaceId = process.env.THEIA_WORKSPACE_ID ?? "ws_local_default";
 const workspaceName = process.env.THEIA_WORKSPACE_NAME ?? "Theia Local Workspace";
@@ -16,9 +17,17 @@ const stateFilePath = path.resolve(process.env.THEIA_LOCAL_CORE_STATE_PATH ?? pa
 const localAuthFilePath = path.resolve(process.env.THEIA_LOCAL_AUTH_PATH ?? path.join(process.cwd(), ".theia", "local-auth.json"));
 const opsEmailFilePath = path.resolve(process.env.THEIA_LOCAL_OPS_EMAIL_PATH ?? path.join(process.cwd(), ".theia", "ops-email.json"));
 const emergencyAuditLogPath = path.resolve(process.env.THEIA_EMERGENCY_AUDIT_PATH ?? path.join(process.cwd(), ".theia", "emergency-audit-log.json"));
+const openClawTelemetryRetentionHours = Math.max(1, Math.min(24 * 30, num(process.env.THEIA_OPENCLAW_TELEMETRY_RETENTION_HOURS) ?? 7 * 24));
+const openClawTelemetryMaxEvents = Math.max(200, Math.min(20000, num(process.env.THEIA_OPENCLAW_TELEMETRY_MAX_EVENTS) ?? 4000));
+const openClawTelemetryMaxPayloadBytes = Math.max(4096, Math.min(1024 * 1024, num(process.env.THEIA_OPENCLAW_TELEMETRY_MAX_PAYLOAD_BYTES) ?? 128 * 1024));
+const openClawTelemetryMaxEventsPerRequest = Math.max(1, Math.min(1000, num(process.env.THEIA_OPENCLAW_TELEMETRY_MAX_EVENTS_PER_REQUEST) ?? 200));
+const openClawTelemetryPairingTtlHours = Math.max(1, Math.min(24 * 7, num(process.env.THEIA_OPENCLAW_TELEMETRY_PAIRING_TTL_HOURS) ?? 24));
+const openClawTelemetryDedupeWindowSeconds = Math.max(2, Math.min(120, num(process.env.THEIA_OPENCLAW_TELEMETRY_DEDUPE_WINDOW_SECONDS) ?? 20));
 const trustedGatewayStopCommand = process.env.THEIA_OPENCLAW_STOP_COMMAND?.trim() || "openclaw";
 const trustedGatewayRestartCommand = process.env.THEIA_OPENCLAW_RESTART_COMMAND?.trim() || "openclaw";
 const defaultOpsAdminEmail = process.env.THEIA_OPS_ADMIN_EMAIL?.trim() || "windsurf345@outlook.com";
+const localCorePort = Number(process.env.THEIA_CORE_PORT ?? 4318);
+const localCoreBaseUrl = text(process.env.THEIA_LOCAL_CORE_BASE_URL) ?? `http://localhost:${localCorePort}`;
 const operatorRoleHeader = "x-theia-operator-role";
 const operatorIdHeader = "x-theia-operator-id";
 const defaultOperatorRole = normalizeRole(process.env.THEIA_OPERATOR_ROLE);
@@ -56,6 +65,15 @@ const openClawDiagnosticsState = {
     health: undefined,
     recentLogMeta: undefined
 };
+const openClawTelemetry = new OpenClawTelemetryHub({
+    workspaceId,
+    retentionMs: openClawTelemetryRetentionHours * 60 * 60 * 1000,
+    maxEvents: openClawTelemetryMaxEvents,
+    maxPayloadBytes: openClawTelemetryMaxPayloadBytes,
+    maxEventsPerRequest: openClawTelemetryMaxEventsPerRequest,
+    dedupeWindowMs: openClawTelemetryDedupeWindowSeconds * 1000
+});
+const openClawSseSubscribers = new Set();
 const emergencyState = {
     status: "ready",
     isStopped: false,
@@ -132,7 +150,7 @@ const app = Fastify({ logger: false });
 app.addHook("onRequest", async (request, reply) => {
     reply.header("Access-Control-Allow-Origin", "*");
     reply.header("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS");
-    reply.header("Access-Control-Allow-Headers", `Authorization, Content-Type, ${operatorRoleHeader}, ${operatorIdHeader}`);
+    reply.header("Access-Control-Allow-Headers", `Authorization, Content-Type, ${operatorRoleHeader}, ${operatorIdHeader}, x-theia-pairing-id, x-theia-pairing-token, x-openclaw-pairing-token`);
     if (request.method === "OPTIONS") {
         reply.code(204).send();
     }
@@ -142,7 +160,7 @@ app.addHook("preHandler", async (request, reply) => {
         return;
     }
     const url = request.url.split("?")[0] ?? request.url;
-    if (url === "/health" || url.startsWith("/auth/")) {
+    if (url === "/health" || url.startsWith("/auth/") || url === "/openclaw/telemetry/events") {
         return;
     }
     const token = bearerToken(request.headers?.authorization);
@@ -165,7 +183,8 @@ app.get("/health", async () => ({
     setupConnected: setup.connected,
     authRequired: true,
     emergencyStopped: emergencyState.isStopped,
-    opsEmailHistory: (await opsEmail.listRecent(1))[0]?.status ?? "none"
+    opsEmailHistory: (await opsEmail.listRecent(1))[0]?.status ?? "none",
+    openClawTelemetry: openClawTelemetry.health()
 }));
 app.post("/auth/signup", async (request, reply) => {
     const email = text(request.body?.email);
@@ -250,6 +269,7 @@ app.get("/setup/openclaw/status", async (request) => ({
         gateway: openClawDiagnosticsState.gateway,
         status: openClawDiagnosticsState.status,
         health: openClawDiagnosticsState.health,
+        telemetry: openClawTelemetry.health(),
         emergencyState: {
             ...emergencyState
         }
@@ -543,12 +563,219 @@ app.get("/openclaw/operations", async (request) => {
         operator,
         runtime: runtimeView(),
         openClawLive: buildOpenClawLive(events, runs, plugins),
+        telemetryHealth: openClawTelemetry.health(),
         connectors: plugins,
         ingestSummary: {
             latestEventCount: ingest.events.length,
             runtimeEventCount: ingest.runtimeEvents.length
         }
     };
+});
+app.get("/openclaw/pairings", async (request, reply) => {
+    const operator = operatorContext(request);
+    if (!requireCapability(reply, operator, "setup:write", "view OpenClaw pairings")) {
+        return denyCapability(operator, "setup:write");
+    }
+    return {
+        generatedAt: new Date().toISOString(),
+        pairings: openClawTelemetry.listPairings(),
+        health: openClawTelemetry.health(),
+        endpoint: `${localCoreBaseUrl}/openclaw/telemetry/events`
+    };
+});
+app.post("/openclaw/pairings", async (request, reply) => {
+    const operator = operatorContext(request);
+    if (!requireCapability(reply, operator, "setup:write", "create OpenClaw pairing")) {
+        return denyCapability(operator, "setup:write");
+    }
+    const actor = authenticatedUser(request);
+    if (!actor) {
+        reply.code(401);
+        return { message: "Authenticated operator is required." };
+    }
+    const ttlHours = Math.max(1, Math.min(24 * 7, num(request.body?.ttlHours) ?? openClawTelemetryPairingTtlHours));
+    const label = text(request.body?.label) ?? `OpenClaw pairing for ${actor.email}`;
+    const created = openClawTelemetry.createPairing({
+        label,
+        ttlHours,
+        userId: actor.userId,
+        userEmail: actor.email,
+        sessionId: actor.sessionId
+    });
+    await persistState("openclaw.telemetry.pairing.create");
+    core.addOperationalAudit("openclaw.telemetry.pairing.create", operator.actorId, created.pairing.pairingId, {
+        ttlHours,
+        label
+    });
+    broadcastOpenClawSse({
+        type: "pairing_created",
+        generatedAt: new Date().toISOString(),
+        pairingId: created.pairing.pairingId,
+        snapshot: buildOpenClawSseSnapshot()
+    });
+    const commands = buildPairingCommands(created.pairing.pairingId, created.token);
+    return {
+        pairingId: created.pairing.pairingId,
+        label: created.pairing.label,
+        expiresAt: created.pairing.expiresAt,
+        telemetryEndpoint: `${localCoreBaseUrl}/openclaw/telemetry/events`,
+        streamEndpoint: `${localCoreBaseUrl}/openclaw/telemetry/stream`,
+        token: created.token,
+        commands
+    };
+});
+app.post("/openclaw/pairings/:pairingId/revoke", async (request, reply) => {
+    const operator = operatorContext(request);
+    if (!requireCapability(reply, operator, "setup:write", "revoke OpenClaw pairing")) {
+        return denyCapability(operator, "setup:write");
+    }
+    const pairingId = text(request.params?.pairingId);
+    if (!pairingId) {
+        reply.code(400);
+        return { message: "pairingId is required." };
+    }
+    const revoked = openClawTelemetry.revokePairing(pairingId, operator.actorId);
+    if (!revoked) {
+        reply.code(404);
+        return { message: "Pairing not found." };
+    }
+    await persistState("openclaw.telemetry.pairing.revoke");
+    core.addOperationalAudit("openclaw.telemetry.pairing.revoke", operator.actorId, pairingId, {});
+    broadcastOpenClawSse({
+        type: "pairing_revoked",
+        generatedAt: new Date().toISOString(),
+        pairingId,
+        snapshot: buildOpenClawSseSnapshot()
+    });
+    return { revoked: true, pairingId };
+});
+app.get("/openclaw/telemetry/health", async (request) => {
+    const operator = operatorContext(request);
+    return {
+        generatedAt: new Date().toISOString(),
+        operator,
+        ...openClawTelemetry.health()
+    };
+});
+app.get("/openclaw/telemetry/history", async (request) => {
+    const limit = Math.max(1, Math.min(1000, num(request.query?.limit) ?? 160));
+    return {
+        generatedAt: new Date().toISOString(),
+        rows: openClawTelemetry.history(limit)
+    };
+});
+app.get("/openclaw/telemetry/raw", async (request, reply) => {
+    const operator = operatorContext(request);
+    if (!canReadRawTelemetry(operator)) {
+        reply.code(403);
+        return {
+            message: "Raw telemetry is restricted to owner/operator/reviewer roles."
+        };
+    }
+    const limit = Math.max(1, Math.min(2000, num(request.query?.limit) ?? 300));
+    return {
+        generatedAt: new Date().toISOString(),
+        rows: openClawTelemetry.history(limit)
+    };
+});
+app.post("/openclaw/telemetry/events", async (request, reply) => {
+    const pairing = openClawTelemetry.authenticatePairing({
+        token: extractPairingToken(request),
+        pairingId: text(request.headers?.["x-theia-pairing-id"]) ?? text(request.body?.pairingId)
+    });
+    if (!pairing) {
+        reply.code(401);
+        return { message: "Telemetry authentication failed. Pairing token invalid or expired." };
+    }
+    const ingest = openClawTelemetry.ingest({
+        pairing,
+        body: request.body ?? {},
+        requestRateKey: `${request.ip}:${pairing.pairingId}`
+    });
+    if (!ingest.ok) {
+        reply.code(ingest.statusCode);
+        await persistState("openclaw.telemetry.ingest.rejected");
+        return {
+            message: ingest.message,
+            issues: ingest.issues
+        };
+    }
+    if (ingest.acceptedEvents.length > 0) {
+        const mappedWorkflowEvents = [];
+        for (const event of ingest.acceptedEvents) {
+            const mapped = toWorkflowEvent(event);
+            mappedWorkflowEvents.push(mapped);
+            core.addEvent(mapped);
+        }
+        highRiskEngine.ingestEvents(mappedWorkflowEvents);
+    }
+    await persistState("openclaw.telemetry.ingest");
+    const snapshot = buildOpenClawSseSnapshot();
+    broadcastOpenClawSse({
+        type: "telemetry_ingest",
+        generatedAt: new Date().toISOString(),
+        acceptedCount: ingest.acceptedCount,
+        rejectedCount: ingest.rejectedCount,
+        dedupedCount: ingest.dedupedCount,
+        lastEventAt: ingest.acceptedEvents.at(-1)?.timestamp,
+        snapshot
+    });
+    return {
+        accepted: ingest.acceptedCount,
+        rejected: ingest.rejectedCount,
+        deduped: ingest.dedupedCount,
+        message: ingest.message
+    };
+});
+app.get("/openclaw/telemetry/stream", async (request, reply) => {
+    const operator = operatorContext(request);
+    reply.hijack();
+    const raw = reply.raw;
+    raw.statusCode = 200;
+    raw.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    raw.setHeader("Cache-Control", "no-cache, no-transform");
+    raw.setHeader("Connection", "keep-alive");
+    raw.setHeader("X-Accel-Buffering", "no");
+    raw.write(`event: ready\ndata: ${JSON.stringify({ generatedAt: new Date().toISOString(), operator })}\n\n`);
+    raw.write(`event: snapshot\ndata: ${JSON.stringify(buildOpenClawSseSnapshot())}\n\n`);
+    const subscriber = (payload) => {
+        try {
+            raw.write(`event: update\ndata: ${JSON.stringify(payload)}\n\n`);
+        }
+        catch {
+            // disconnected
+        }
+    };
+    openClawSseSubscribers.add(subscriber);
+    const telemetryUnsubscribe = openClawTelemetry.subscribe((record) => {
+        subscriber({
+            type: "telemetry_event",
+            generatedAt: new Date().toISOString(),
+            event: record,
+            snapshot: buildOpenClawSseSnapshot()
+        });
+    });
+    const keepAlive = setInterval(() => {
+        try {
+            raw.write(`event: ping\ndata: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`);
+        }
+        catch {
+            // disconnected
+        }
+    }, 15000);
+    const close = () => {
+        clearInterval(keepAlive);
+        telemetryUnsubscribe();
+        openClawSseSubscribers.delete(subscriber);
+        try {
+            raw.end();
+        }
+        catch {
+            // no-op
+        }
+    };
+    request.raw.on("close", close);
+    request.raw.on("end", close);
 });
 app.post("/openclaw/emergency-stop", async (request, reply) => {
     const operator = operatorContext(request);
@@ -598,6 +825,14 @@ app.post("/openclaw/emergency-stop", async (request, reply) => {
             affectedServices: ["openclaw gateway", "runtime poller", "openclaw connector"]
         });
         await persistState("openclaw.emergency.stop.success");
+        broadcastOpenClawSse({
+            type: "emergency_stop",
+            generatedAt: new Date().toISOString(),
+            status: "stopped",
+            actorId: operator.actorId,
+            reason,
+            snapshot: buildOpenClawSseSnapshot()
+        });
         await notifyOpsEmail(operator.actorId, "[Theia] Emergency stop completed", [
             `Actor: ${operator.actorId}`,
             `Workspace: ${workspaceName} (${workspaceId})`,
@@ -636,6 +871,15 @@ app.post("/openclaw/emergency-stop", async (request, reply) => {
         affectedServices: ["openclaw gateway"]
     });
     await persistState("openclaw.emergency.stop.failed");
+    broadcastOpenClawSse({
+        type: "emergency_stop",
+        generatedAt: new Date().toISOString(),
+        status: "failed",
+        actorId: operator.actorId,
+        reason,
+        error: emergencyState.lastError,
+        snapshot: buildOpenClawSseSnapshot()
+    });
     await notifyOpsEmail(operator.actorId, "[Theia] Emergency stop failed", [
         `Actor: ${operator.actorId}`,
         `Workspace: ${workspaceName} (${workspaceId})`,
@@ -685,6 +929,14 @@ app.post("/openclaw/restart-gateway", async (request, reply) => {
         ], {
             includeAdminCopy: true
         });
+        broadcastOpenClawSse({
+            type: "gateway_restart",
+            generatedAt: new Date().toISOString(),
+            status: "failed",
+            actorId: operator.actorId,
+            error: emergencyState.lastError,
+            snapshot: buildOpenClawSseSnapshot()
+        });
         reply.code(502);
         return { restarted: false, message: "Gateway restart failed.", error: emergencyState.lastError, emergencyState };
     }
@@ -703,6 +955,13 @@ app.post("/openclaw/restart-gateway", async (request, reply) => {
     emergencyState.lastResult = commandResult.summary;
     emergencyState.lastUpdatedAt = new Date().toISOString();
     await persistState("openclaw.gateway.restart.success");
+    broadcastOpenClawSse({
+        type: "gateway_restart",
+        generatedAt: new Date().toISOString(),
+        status: "ready",
+        actorId: operator.actorId,
+        snapshot: buildOpenClawSseSnapshot()
+    });
     core.addOperationalAudit("openclaw.gateway_restart", operator.actorId, "openclaw.gateway", {
         result: commandResult.summary,
         resumeAutomation
@@ -949,9 +1208,8 @@ app.post("/workflows/retire-stale", async (request, reply) => {
 app.get("/memory", async () => core.listMemory());
 app.get("/audit", async () => core.listAudit());
 app.get("/connectors/health", async () => core.listConnectorHealth());
-const port = Number(process.env.THEIA_CORE_PORT ?? 4318);
-await app.listen({ port, host: "0.0.0.0" });
-console.log(`Theia local core listening on http://localhost:${port}`);
+await app.listen({ port: localCorePort, host: "0.0.0.0" });
+console.log(`Theia local core listening on http://localhost:${localCorePort}`);
 async function buildCore() {
     const next = new TheiaCore({
         workspaceId,
@@ -994,6 +1252,21 @@ async function validateSetup(runIngest) {
                     ? `${runtime.mode} mode via event-feed (${runtime.endpoint ?? "endpoint missing"})`
                     : `${runtime.mode} mode via OpenClaw CLI (${runtime.cliCommand})`)
             : "Runtime telemetry disabled"
+    });
+    const telemetryHealth = openClawTelemetry.health();
+    checks.push({
+        id: "openclaw_push",
+        label: "OpenClaw Push Telemetry",
+        status: telemetryHealth.activePairings > 0
+            ? telemetryHealth.metrics.lastIngestAt
+                ? "pass"
+                : "warn"
+            : "warn",
+        detail: telemetryHealth.activePairings > 0
+            ? telemetryHealth.metrics.lastIngestAt
+                ? `Active pairings: ${telemetryHealth.activePairings}, latest ingest: ${telemetryHealth.metrics.lastIngestAt}`
+                : `Active pairings: ${telemetryHealth.activePairings}, waiting for first push event`
+            : "No active push pairings configured"
     });
     const pluginRows = await pluginList();
     const enabled = pluginRows.filter((plugin) => plugin.enabled).length;
@@ -1063,6 +1336,7 @@ async function pollOpenClawRuntime() {
     if (!pluginEnabled["openclaw-main"]) {
         return [];
     }
+    await refreshOpenClawSourcesIfNeeded();
     openClawDiagnosticsState.sourceHealth = await inspectOpenClawSources(sources.openClawSources);
     if (!runtime.enabled || runtime.mode === "log_only") {
         setup.runtime = runtimeView();
@@ -1082,6 +1356,42 @@ async function pollOpenClawRuntime() {
         setup.runtime = runtimeView();
         await persistState("runtime.poll.error");
         return [];
+    }
+}
+async function refreshOpenClawSourcesIfNeeded() {
+    if (sources.openClawSources.length === 0) {
+        return;
+    }
+    const next = [];
+    let changed = false;
+    for (const configured of sources.openClawSources) {
+        const absolute = path.resolve(configured);
+        if (await exists(absolute)) {
+            next.push(absolute);
+            continue;
+        }
+        const parent = path.dirname(absolute);
+        const extension = path.extname(absolute).toLowerCase();
+        const inOpenClawSessions = absolute.toLowerCase().includes(`${path.sep}.openclaw${path.sep}agents${path.sep}`.toLowerCase()) &&
+            absolute.toLowerCase().includes(`${path.sep}sessions${path.sep}`.toLowerCase());
+        if ((extension === ".jsonl" || extension === ".log" || extension === ".ndjson" || extension === ".txt") && (await isDir(parent))) {
+            next.push(parent);
+            changed = true;
+            continue;
+        }
+        if (inOpenClawSessions && (await isDir(parent))) {
+            next.push(parent);
+            changed = true;
+            continue;
+        }
+        next.push(absolute);
+    }
+    const normalized = uniq(next);
+    if (changed || normalized.length !== sources.openClawSources.length || normalized.some((entry, idx) => entry !== sources.openClawSources[idx])) {
+        sources.openClawSources = normalized;
+        setup.discoveredSources.openClawLogPaths = normalized;
+        await rebuildCore();
+        await persistState("openclaw.sources.refresh");
     }
 }
 async function pollOpenClawRuntimeEventFeed() {
@@ -1557,6 +1867,121 @@ function denyCapability(operator, capability) {
         capability
     };
 }
+function canReadRawTelemetry(operator) {
+    return ["owner", "operator", "reviewer"].includes(operator.role);
+}
+function extractPairingToken(request) {
+    const fromHeader = bearerToken(request.headers?.authorization) ??
+        text(request.headers?.["x-theia-pairing-token"]) ??
+        text(request.headers?.["x-openclaw-pairing-token"]);
+    if (fromHeader) {
+        return fromHeader;
+    }
+    return text(request.body?.token) ?? text(request.body?.pairingToken);
+}
+function buildPairingCommands(pairingId, token) {
+    const endpoint = `${localCoreBaseUrl}/openclaw/telemetry/events`;
+    const payload = {
+        events: [
+            {
+                eventType: "agent.connected",
+                status: "ok",
+                message: "OpenClaw pairing test event from terminal.",
+                timestamp: new Date().toISOString(),
+                runId: "run:openclaw",
+                agentId: "agent:openclaw",
+                severity: "info",
+                confidence: 0.9,
+                source: "openclaw-hook"
+            }
+        ]
+    };
+    return {
+        powershell: [
+            `$env:THEIA_OPENCLAW_PAIRING_ID='${pairingId}'`,
+            `$env:THEIA_OPENCLAW_PAIRING_TOKEN='${token}'`,
+            `$env:THEIA_OPENCLAW_TELEMETRY_ENDPOINT='${endpoint}'`,
+            "Invoke-RestMethod -Method Post -Uri $env:THEIA_OPENCLAW_TELEMETRY_ENDPOINT -Headers @{ Authorization = \"Bearer $env:THEIA_OPENCLAW_PAIRING_TOKEN\"; \"x-theia-pairing-id\" = $env:THEIA_OPENCLAW_PAIRING_ID } -ContentType \"application/json\" -Body '{\"events\":[{\"eventType\":\"agent.connected\",\"status\":\"ok\",\"message\":\"OpenClaw pairing test event from terminal.\",\"timestamp\":\"' + (Get-Date).ToUniversalTime().ToString(\"o\") + '\",\"runId\":\"run:openclaw\",\"agentId\":\"agent:openclaw\",\"severity\":\"info\",\"confidence\":0.9,\"source\":\"openclaw-hook\"}]}'"
+        ],
+        bash: [
+            `export THEIA_OPENCLAW_PAIRING_ID='${pairingId}'`,
+            `export THEIA_OPENCLAW_PAIRING_TOKEN='${token}'`,
+            `export THEIA_OPENCLAW_TELEMETRY_ENDPOINT='${endpoint}'`,
+            `curl -X POST "$THEIA_OPENCLAW_TELEMETRY_ENDPOINT" -H "Authorization: Bearer $THEIA_OPENCLAW_PAIRING_TOKEN" -H "x-theia-pairing-id: $THEIA_OPENCLAW_PAIRING_ID" -H "Content-Type: application/json" -d '${JSON.stringify(payload)}'`
+        ]
+    };
+}
+function toWorkflowEvent(telemetryEvent) {
+    const inferredType = inferOpenClawRuntimeEventType({
+        eventType: telemetryEvent.eventType,
+        status: telemetryEvent.status,
+        message: telemetryEvent.message,
+        metadata: telemetryEvent.metadata
+    });
+    const mappedType = inferredType ?? (telemetryEvent.status === "failed" ? "run.failed" : "task.updated");
+    const payload = {
+        ...telemetryEvent.metadata,
+        sourceSystem: "openclaw-telemetry",
+        summary: telemetryEvent.message,
+        status: telemetryEvent.status,
+        severity: telemetryEvent.severity,
+        telemetrySource: telemetryEvent.source
+    };
+    if (telemetryEvent.memorySummary?.filePathHint) {
+        payload.filePath = telemetryEvent.memorySummary.filePathHint;
+        payload.memorySummary = telemetryEvent.memorySummary;
+    }
+    if (telemetryEvent.logSummary?.filePathHint) {
+        payload.logSummary = telemetryEvent.logSummary;
+        if (!payload.filePath) {
+            payload.filePath = telemetryEvent.logSummary.filePathHint;
+        }
+    }
+    return {
+        eventId: `openclaw-telemetry:${telemetryEvent.id}`,
+        workspaceId,
+        runId: telemetryEvent.runId,
+        agentId: telemetryEvent.agentId,
+        taskId: telemetryEvent.taskId,
+        eventType: mappedType,
+        timestamp: telemetryEvent.timestamp,
+        payload,
+        source: {
+            connectorId: "openclaw-telemetry",
+            objectPath: telemetryEvent.pairingId
+        },
+        confidence: clamp(telemetryEvent.confidence ?? 0.78),
+        evidenceRefs: []
+    };
+}
+function quickPluginRows() {
+    return pluginListSync().map((plugin) => ({
+        ...plugin,
+        status: plugin.enabled ? "degraded" : "disabled",
+        syncHealth: plugin.enabled ? "Telemetry in progress" : "Disabled",
+        lastSync: setup.lastValidatedAt ?? setup.lastConnectedAt
+    }));
+}
+function buildOpenClawSseSnapshot() {
+    const events = core.listEvents();
+    const runs = deriveRuns(core.listRuns(), events);
+    const live = buildOpenClawLive(events, runs, quickPluginRows());
+    return {
+        generatedAt: new Date().toISOString(),
+        openClawLive: live,
+        telemetryHealth: openClawTelemetry.health()
+    };
+}
+function broadcastOpenClawSse(payload) {
+    for (const subscriber of openClawSseSubscribers) {
+        try {
+            subscriber(payload);
+        }
+        catch {
+            // no-op
+        }
+    }
+}
 async function executeGatewayControl(action) {
     const args = action === "stop" ? ["gateway", "stop"] : ["gateway", "start"];
     const command = action === "stop" ? trustedGatewayStopCommand : trustedGatewayRestartCommand;
@@ -1857,6 +2282,9 @@ async function hydrateFromStateFile() {
         if (parsed.highRiskNotifications && typeof parsed.highRiskNotifications === "object") {
             highRiskEngine.replaceState(parsed.highRiskNotifications);
         }
+        if (parsed.openClawTelemetry && typeof parsed.openClawTelemetry === "object") {
+            openClawTelemetry.restoreState(parsed.openClawTelemetry);
+        }
         setup.runtime = runtimeView();
     }
     catch {
@@ -1864,7 +2292,7 @@ async function hydrateFromStateFile() {
 }
 function statePayload(reason) {
     return {
-        version: 5,
+        version: 6,
         reason,
         updatedAt: new Date().toISOString(),
         workspaceId,
@@ -1903,7 +2331,8 @@ function statePayload(reason) {
             ...emergencyState
         },
         alertOverrides: Object.fromEntries(alertOverrides.entries()),
-        highRiskNotifications: highRiskEngine.exportState()
+        highRiskNotifications: highRiskEngine.exportState(),
+        openClawTelemetry: openClawTelemetry.exportState()
     };
 }
 async function persistState(reason) {
@@ -2315,6 +2744,10 @@ function buildMetrics(agents, runs, alerts, tokenSeries, connectorHealth, plugin
 }
 function buildOpenClawLive(events, runs, plugins) {
     const runtimeState = runtimeView();
+    const telemetryHealth = openClawTelemetry.health();
+    const telemetryHistory = openClawTelemetry.history(24);
+    const latestTelemetry = telemetryHistory[0];
+    const telemetryConnected = telemetryHealth.activePairings > 0 && Boolean(latestTelemetry);
     const connector = plugins.find((plugin) => plugin.pluginId === "openclaw-main");
     const openClawEvents = [...events]
         .filter((event) => {
@@ -2392,6 +2825,17 @@ function buildOpenClawLive(events, runs, plugins) {
             statusMessage = `Recent OpenClaw connector failures detected (${recentFailures} in recent activity).`;
         }
     }
+    if (!emergencyState.isStopped && telemetryConnected && connectionStatus !== "connected") {
+        connectionStatus = "connected";
+        statusMessage = "OpenClaw is actively reporting telemetry into Theia via authenticated pairing.";
+    }
+    if (!emergencyState.isStopped && telemetryHealth.activePairings > 0 && !latestTelemetry && connectionStatus === "offline") {
+        connectionStatus = "degraded";
+        statusMessage = "OpenClaw pairings are active. Waiting for first telemetry push event.";
+    }
+    if (telemetryHealth.metrics.requestsRejected > 0 && connectionStatus === "connected") {
+        connectionStatus = "degraded";
+    }
     const recentActivity = openClawEvents.slice(0, 8).map((event) => ({
         ts: event.timestamp,
         eventType: event.eventType,
@@ -2399,6 +2843,7 @@ function buildOpenClawLive(events, runs, plugins) {
         runId: event.runId,
         agentId: event.agentId
     }));
+    const telemetryTransport = runtimeState.enabled && telemetryHealth.activePairings > 0 ? "hybrid" : telemetryHealth.activePairings > 0 ? "push" : "poll";
     return {
         connectionStatus,
         statusMessage,
@@ -2434,12 +2879,26 @@ function buildOpenClawLive(events, runs, plugins) {
                 ...emergencyState
             }
         },
+        telemetry: {
+            transport: telemetryTransport,
+            ingestEndpoint: `${localCoreBaseUrl}/openclaw/telemetry/events`,
+            streamEndpoint: `${localCoreBaseUrl}/openclaw/telemetry/stream`,
+            activePairings: telemetryHealth.activePairings,
+            totalPairings: telemetryHealth.totalPairings,
+            eventsStored: telemetryHealth.eventCount,
+            latestEventAt: telemetryHealth.latestEventAt,
+            lastIngestAt: telemetryHealth.metrics.lastIngestAt,
+            requestsAccepted: telemetryHealth.metrics.requestsAccepted,
+            requestsRejected: telemetryHealth.metrics.requestsRejected,
+            dedupedEvents: telemetryHealth.metrics.dedupedEvents
+        },
         recentActivity,
         reconnectHints: [
             "Run `openclaw gateway --port 18789`, then confirm with `openclaw gateway status`.",
             "Open the Control UI with `openclaw dashboard` or http://127.0.0.1:18789/.",
             "If using gateway_cli mode, verify THEIA_OPENCLAW_CLI_COMMAND and local PATH access.",
-            "If using event_feed mode, verify THEIA runtime endpoint points to an event stream, not /v1 inference APIs."
+            "If using event_feed mode, verify THEIA runtime endpoint points to an event stream, not /v1 inference APIs.",
+            "For push telemetry, create a pairing in setup and configure OpenClaw hook/plugin token env variables."
         ]
     };
 }
