@@ -14,11 +14,16 @@
     "lint": "echo 'No lint configured for @theia/local-core'",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
+  "devDependencies": {
+    "@types/nodemailer": "^6.4.17"
+  },
   "dependencies": {
     "@theia/connector-sdk": "workspace:*",
     "@theia/event-schema": "workspace:*",
     "@theia/policy-engine": "workspace:*",
     "@theia/reasoning-engine": "workspace:*",
-    "fastify": "^5.2.1"
+    "bcryptjs": "^3.0.3",
+    "fastify": "^5.2.1",
+    "nodemailer": "^6.10.1"
   }
 }

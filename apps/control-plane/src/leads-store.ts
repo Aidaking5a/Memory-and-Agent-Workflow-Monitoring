@@ -8,6 +8,7 @@ export interface LeadRecord {
   createdAt: string;
   updatedAt: string;
   lastSubmittedAt: string;
+  lastSubmissionSignature?: string;
   submissionCount: number;
   status: LeadStatus;
   name: string;
@@ -20,6 +21,8 @@ export interface LeadRecord {
   referrer?: string;
   userAgent?: string;
   ipHash?: string;
+  submittedByUserId?: string;
+  submittedByEmail?: string;
   notes: string[];
 }
 
@@ -32,6 +35,8 @@ export interface LeadUpsertInput {
   email: string;
   role: string;
   environment: string;
+  submissionSignature?: string;
+  dedupeWindowSeconds?: number;
   company?: string;
   sourcePage?: string;
   origin?: string;
@@ -39,6 +44,8 @@ export interface LeadUpsertInput {
   userAgent?: string;
   ipHash?: string;
   markAsSpam?: boolean;
+  submittedByUserId?: string;
+  submittedByEmail?: string;
 }
 
 export interface LeadListQuery {
@@ -94,17 +101,33 @@ export class LeadsStore {
     }
   }
 
-  public async upsertLead(input: LeadUpsertInput): Promise<{ lead: LeadRecord; isNew: boolean }> {
+  public async upsertLead(input: LeadUpsertInput): Promise<{ lead: LeadRecord; isNew: boolean; wasDuplicate: boolean }> {
     return this.withLock(async () => {
       const current = await this.read();
       const now = new Date().toISOString();
       const email = normalizeEmail(input.email);
+      const submissionSignature = safeText(input.submissionSignature);
+      const dedupeWindowSeconds = Number.isFinite(input.dedupeWindowSeconds)
+        ? Math.max(10, Math.min(900, Math.floor(input.dedupeWindowSeconds ?? 120)))
+        : 120;
+      const dedupeWindowMs = dedupeWindowSeconds * 1000;
 
       const existing = current.leads.find((lead) => lead.email === email);
       if (existing) {
+        const lastSubmittedAtMs = new Date(existing.lastSubmittedAt).getTime();
+        if (
+          submissionSignature &&
+          existing.lastSubmissionSignature === submissionSignature &&
+          Number.isFinite(lastSubmittedAtMs) &&
+          Date.now() - lastSubmittedAtMs <= dedupeWindowMs
+        ) {
+          return { lead: existing, isNew: false, wasDuplicate: true };
+        }
+
         existing.updatedAt = now;
         existing.lastSubmittedAt = now;
         existing.submissionCount += 1;
+        existing.lastSubmissionSignature = submissionSignature || existing.lastSubmissionSignature;
         existing.name = safeText(input.name, existing.name);
         existing.role = safeText(input.role, existing.role);
         existing.environment = safeText(input.environment, existing.environment);
@@ -114,11 +137,13 @@ export class LeadsStore {
         existing.referrer = safeText(input.referrer, existing.referrer ?? "");
         existing.userAgent = safeText(input.userAgent, existing.userAgent ?? "");
         existing.ipHash = safeText(input.ipHash, existing.ipHash ?? "");
+        existing.submittedByUserId = safeText(input.submittedByUserId, existing.submittedByUserId ?? "");
+        existing.submittedByEmail = safeText(input.submittedByEmail, existing.submittedByEmail ?? "");
         if (input.markAsSpam) {
           existing.status = "spam";
         }
         await this.write(current);
-        return { lead: existing, isNew: false };
+        return { lead: existing, isNew: false, wasDuplicate: false };
       }
 
       const lead: LeadRecord = {
@@ -126,6 +151,7 @@ export class LeadsStore {
         createdAt: now,
         updatedAt: now,
         lastSubmittedAt: now,
+        lastSubmissionSignature: submissionSignature || undefined,
         submissionCount: 1,
         status: input.markAsSpam ? "spam" : "new",
         name: safeText(input.name),
@@ -138,11 +164,13 @@ export class LeadsStore {
         referrer: safeText(input.referrer),
         userAgent: safeText(input.userAgent),
         ipHash: safeText(input.ipHash),
+        submittedByUserId: safeText(input.submittedByUserId),
+        submittedByEmail: safeText(input.submittedByEmail),
         notes: []
       };
       current.leads.push(lead);
       await this.write(current);
-      return { lead, isNew: true };
+      return { lead, isNew: true, wasDuplicate: false };
     });
   }
 

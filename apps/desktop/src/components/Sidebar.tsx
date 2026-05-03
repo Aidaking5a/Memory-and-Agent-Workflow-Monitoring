@@ -8,6 +8,7 @@ interface SidebarProps {
 
 const NAV_ITEMS: Array<{ key: ViewKey; label: string }> = [
   { key: "onboarding", label: "OpenClaw Setup" },
+  { key: "openclaw", label: "OpenClaw Operations" },
   { key: "overview", label: "Overview" },
   { key: "agents", label: "Agent Health" },
   { key: "timeline", label: "Workflow Timeline" },

@@ -58,6 +58,16 @@ pnpm --filter @theia/desktop dev
 
 Desktop URL: `http://localhost:5173` (fixed dev port).
 
+Important: local-core now requires sign-in for sensitive routes. On first run, create your local account in the desktop sign-in screen.
+
+6. (Optional) Run marketing website locally:
+
+```bash
+pnpm run dev:website
+```
+
+Website URL: `http://localhost:4173`.
+
 ## Desktop Installer Packaging (.exe/.dmg)
 
 The desktop app is now scaffolded for native installers with Tauri.
@@ -140,6 +150,8 @@ Daily startup (Keycloak + local core + control plane + desktop):
 pnpm run dev:stack
 ```
 
+This now also starts the local website server on `http://localhost:4173`.
+
 If another process is blocking `localhost:5173`, reclaim it automatically for Theia desktop:
 
 ```powershell
@@ -164,6 +176,13 @@ The website demo form posts to:
 
 - `POST /api/public/leads` on the control plane
 
+Public lead submission now requires public auth first:
+
+- `POST /api/public/auth/signup`
+- `POST /api/public/auth/signin`
+- `GET /api/public/auth/me`
+- `POST /api/public/auth/logout`
+
 Authenticated operators can review and manage leads in:
 
 - `http://localhost:4620/dashboard`
@@ -171,12 +190,44 @@ Authenticated operators can review and manage leads in:
 Lead records are stored locally at:
 
 - `apps/control-plane/data/lead-submissions.json`
+- `apps/control-plane/data/lead-deliveries.json` (delivery audit: sent / queued_local / failed)
 
 Lead-related environment variables:
 
 - `THEIA_LEADS_ALLOW_ORIGINS` (comma-separated allowed origins for public lead POSTs)
 - `THEIA_LEADS_IP_HASH_SALT` (optional salt for privacy-preserving IP hashing)
+- `THEIA_LEADS_DEDUPE_WINDOW_SECONDS` (idempotent payload dedupe window)
+- `THEIA_LEADS_RATE_LIMIT_WINDOW_SECONDS` and `THEIA_LEADS_RATE_LIMIT_MAX_SUBMISSIONS`
 - `THEIA_ENABLE_DEV_LOGIN` (set `false` for public deployments)
+- `THEIA_LEADS_NOTIFY_TO` (default `windsurf345@outlook.com`)
+- `THEIA_LEADS_NOTIFY_SMTP_HOST` + SMTP credentials (for direct email delivery)
+- `THEIA_PUBLIC_AUTH_TTL_HOURS` / `THEIA_PUBLIC_AUTH_RATE_LIMIT_*` (public auth session + anti-abuse)
+
+If SMTP is not configured, leads are still accepted and stored, and delivery status is marked `queued_local` so no submission is silently dropped.
+
+## Emergency Stop (OpenClaw)
+
+Sensitive control endpoints require local-core auth (bearer token from `/auth/signin`).
+
+Emergency endpoints:
+
+- `POST /openclaw/emergency-stop` (owner/operator capability required)
+- `POST /openclaw/restart-gateway`
+- `GET /openclaw/emergency-audit`
+
+Behavior:
+
+- Emergency stop attempts to run a fixed trusted gateway stop command (`openclaw gateway stop`).
+- Runtime polling and OpenClaw connector automation are halted immediately in Theia state.
+- Theia writes audit records to policy audit + `.theia/emergency-audit-log.json`.
+- Operator/admin status emails are sent via `SMTP_*` or queued locally if SMTP is not configured.
+
+Local-core auth endpoints:
+
+- `POST /auth/signup`
+- `POST /auth/signin`
+- `GET /auth/me`
+- `POST /auth/logout`
 
 ## Public HTTPS Control Plane (Render)
 

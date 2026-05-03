@@ -27,13 +27,53 @@
 
   const leadForm = document.querySelector("[data-theia-lead-form]");
   if (leadForm instanceof HTMLFormElement) {
+    const LEAD_AUTH_TOKEN_KEY = "theiaLeadAuthToken";
+    const leadAuthForm = document.querySelector("[data-lead-auth-form]");
+    const leadAuthFeedbackNode = document.querySelector("[data-lead-auth-feedback]");
+    const leadAuthUserNode = document.querySelector("[data-lead-auth-user]");
     const feedbackNode = leadForm.querySelector("[data-form-feedback]");
     const submitButton = leadForm.querySelector("button[type=\"submit\"]");
+    const submitLabel = submitButton instanceof HTMLButtonElement ? submitButton.textContent || "Send Request" : "Send Request";
     const configuredBase = (leadForm.getAttribute("data-api-base-url") || "").trim();
     const urlParams = new URLSearchParams(window.location.search);
     const queryBase = (urlParams.get("apiBase") || "").trim();
-    const localFallback = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? "http://localhost:4620" : "";
-    const endpointBase = queryBase || configuredBase || localFallback || window.location.origin;
+    const localFallback =
+      window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+        ? "http://localhost:4620"
+        : "";
+    const endpointBase = queryBase || localFallback || configuredBase || window.location.origin;
+    const authEndpointBase = endpointBase.replace(/\/$/, "");
+    let leadAuthReady = false;
+
+    function getLeadAuthToken() {
+      return window.localStorage.getItem(LEAD_AUTH_TOKEN_KEY);
+    }
+
+    function setLeadAuthToken(token) {
+      if (!token) {
+        window.localStorage.removeItem(LEAD_AUTH_TOKEN_KEY);
+        return;
+      }
+      window.localStorage.setItem(LEAD_AUTH_TOKEN_KEY, token);
+    }
+
+    function setAuthFeedback(message, state) {
+      if (!(leadAuthFeedbackNode instanceof HTMLElement)) return;
+      leadAuthFeedbackNode.textContent = message;
+      leadAuthFeedbackNode.classList.remove("ok", "error");
+      if (state === "ok" || state === "error") {
+        leadAuthFeedbackNode.classList.add(state);
+      }
+    }
+
+    function setAuthUserLabel(email) {
+      if (!(leadAuthUserNode instanceof HTMLElement)) return;
+      leadAuthUserNode.textContent = email ? "Signed in as " + email : "Not signed in.";
+      leadAuthReady = Boolean(email);
+      if (submitButton instanceof HTMLButtonElement) {
+        submitButton.disabled = !leadAuthReady;
+      }
+    }
 
     function setFeedback(message, state) {
       if (!(feedbackNode instanceof HTMLElement)) return;
@@ -44,43 +84,246 @@
       }
     }
 
+    function setSubmitBusy(isBusy) {
+      if (!(submitButton instanceof HTMLButtonElement)) return;
+      submitButton.disabled = isBusy || !leadAuthReady;
+      submitButton.textContent = isBusy ? "Sending..." : submitLabel;
+    }
+
+    setSubmitBusy(false);
+
+    function findFieldNode(name) {
+      return leadForm.querySelector('[name="' + name + '"]');
+    }
+
+    function clearFieldErrors() {
+      leadForm.querySelectorAll("[data-field-error]").forEach(function (node) {
+        node.remove();
+      });
+      leadForm.querySelectorAll("input, select, textarea").forEach(function (node) {
+        node.removeAttribute("aria-invalid");
+      });
+    }
+
+    function setFieldError(name, message) {
+      const field = findFieldNode(name);
+      if (!(field instanceof HTMLElement) || !message) return;
+      field.setAttribute("aria-invalid", "true");
+      const error = document.createElement("p");
+      error.className = "field-error";
+      error.setAttribute("data-field-error", name);
+      error.textContent = message;
+      field.insertAdjacentElement("afterend", error);
+    }
+
+    function emailValid(value) {
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) && value.length <= 200;
+    }
+
+    function buildIdempotencyKey() {
+      if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        return "lead_" + crypto.randomUUID();
+      }
+      return "lead_" + Date.now() + "_" + Math.random().toString(36).slice(2, 10);
+    }
+
+    function validate(formData) {
+      const errors = {};
+      const name = String(formData.get("name") || "").trim();
+      const email = String(formData.get("email") || "").trim().toLowerCase();
+      const role = String(formData.get("role") || "").trim();
+      const environment = String(formData.get("environment") || "").trim();
+      const company = String(formData.get("company") || "").trim();
+
+      if (name.length < 2) errors.name = "Enter at least 2 characters for your name.";
+      if (!emailValid(email)) errors.email = "Enter a valid work email address.";
+      if (!role) errors.role = "Select your role.";
+      if (environment.length < 20) errors.environment = "Provide at least 20 characters so we can scope your setup.";
+      if (environment.length > 2000) errors.environment = "Keep this field under 2000 characters.";
+      if (company.length > 120) errors.company = "Keep company name under 120 characters.";
+
+      return {
+        valid: Object.keys(errors).length === 0,
+        errors: errors
+      };
+    }
+
+    async function refreshLeadAuthStatus() {
+      const token = getLeadAuthToken();
+      if (!token) {
+        setAuthUserLabel("");
+        return null;
+      }
+      try {
+        const response = await fetch(authEndpointBase + "/api/public/auth/me", {
+          method: "GET",
+          headers: {
+            Authorization: "Bearer " + token
+          }
+        });
+        if (!response.ok) {
+          setLeadAuthToken("");
+          setAuthUserLabel("");
+          return null;
+        }
+        const body = await response.json().catch(function () {
+          return {};
+        });
+        const email = body?.user?.email;
+        setAuthUserLabel(typeof email === "string" ? email : "");
+        return body?.user ?? null;
+      } catch {
+        setAuthUserLabel("");
+        return null;
+      }
+    }
+
+    async function runLeadAuthAction(action) {
+      if (!(leadAuthForm instanceof HTMLFormElement)) return null;
+      const formData = new FormData(leadAuthForm);
+      const email = String(formData.get("email") || "").trim().toLowerCase();
+      const password = String(formData.get("password") || "");
+      if (!email || !password) {
+        setAuthFeedback("Email and password are required.", "error");
+        return null;
+      }
+      if (!emailValid(email)) {
+        setAuthFeedback("Enter a valid email address.", "error");
+        return null;
+      }
+      if (password.length < 10) {
+        setAuthFeedback("Password must be at least 10 characters.", "error");
+        return null;
+      }
+      setAuthFeedback(action === "signup" ? "Creating account..." : "Signing in...", null);
+      const response = await fetch(authEndpointBase + "/api/public/auth/" + action, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          email: email,
+          password: password
+        })
+      });
+      const body = await response.json().catch(function () {
+        return {};
+      });
+      if (!response.ok) {
+        throw new Error(typeof body.message === "string" ? body.message : "Authentication failed.");
+      }
+      if (typeof body.token !== "string") {
+        throw new Error("Authentication token missing from response.");
+      }
+      setLeadAuthToken(body.token);
+      setAuthUserLabel(email);
+      setAuthFeedback(action === "signup" ? "Account created and signed in." : "Signed in.", "ok");
+      return body.user ?? null;
+    }
+
+    if (leadAuthForm instanceof HTMLFormElement) {
+      leadAuthForm.querySelectorAll("[data-lead-auth-action]").forEach(function (button) {
+        button.addEventListener("click", async function () {
+          const action = button.getAttribute("data-lead-auth-action");
+          if (action === "logout") {
+            const token = getLeadAuthToken();
+            if (token) {
+              await fetch(authEndpointBase + "/api/public/auth/logout", {
+                method: "POST",
+                headers: {
+                  Authorization: "Bearer " + token
+                }
+              }).catch(function () {
+                return null;
+              });
+            }
+            setLeadAuthToken("");
+            setAuthUserLabel("");
+            setAuthFeedback("Signed out.", "ok");
+            return;
+          }
+          try {
+            await runLeadAuthAction(action === "signup" ? "signup" : "signin");
+          } catch (authError) {
+            setAuthFeedback(authError instanceof Error ? authError.message : "Authentication failed.", "error");
+          }
+        });
+      });
+    }
+
+    void refreshLeadAuthStatus();
+
     leadForm.addEventListener("submit", async function (event) {
       event.preventDefault();
-      setFeedback("Sending request...", null);
-      if (submitButton instanceof HTMLButtonElement) {
-        submitButton.disabled = true;
+      clearFieldErrors();
+      const formData = new FormData(leadForm);
+      const validation = validate(formData);
+      if (!validation.valid) {
+        Object.entries(validation.errors).forEach(function (entry) {
+          setFieldError(entry[0], entry[1]);
+        });
+        setFeedback("Please fix the highlighted fields and submit again.", "error");
+        return;
       }
 
+      if (!formData.get("sourcePage")) {
+        formData.set("sourcePage", window.location.pathname || "/contact.html");
+      }
+
+      setSubmitBusy(true);
+      setFeedback("Sending request...", null);
+
       try {
-        const formData = new FormData(leadForm);
+        const authUser = await refreshLeadAuthStatus();
+        const token = getLeadAuthToken();
+        if (!token || !authUser) {
+          throw new Error("Sign in is required before submitting an application.");
+        }
         const payload = Object.fromEntries(formData.entries());
+        const idempotencyKey = buildIdempotencyKey();
         const response = await fetch(endpointBase.replace(/\/$/, "") + "/api/public/leads", {
           method: "POST",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "X-Theia-Idempotency-Key": idempotencyKey,
+            Authorization: "Bearer " + token
           },
           body: JSON.stringify(payload)
         });
 
+        const body = await response.json().catch(function () {
+          return {};
+        });
+
         if (!response.ok) {
-          const body = await response.json().catch(function () {
-            return {};
-          });
+          if (Array.isArray(body.errors)) {
+            setFeedback(body.errors.join(" "), "error");
+          }
           if (response.status === 404) {
             throw new Error("Lead API endpoint not configured yet.");
+          }
+          if (response.status === 429) {
+            throw new Error("Too many attempts. Please wait a minute and retry.");
           }
           throw new Error(typeof body.message === "string" ? body.message : "Unable to submit request right now.");
         }
 
         leadForm.reset();
-        setFeedback("Request received. We will follow up shortly.", "ok");
+        const ref = typeof body.leadId === "string" ? body.leadId : "pending";
+        if (body.deduplicated) {
+          setFeedback("Request already received recently (Ref: " + ref + "). We will follow up shortly.", "ok");
+        } else {
+          setFeedback("Request received (Ref: " + ref + "). We will follow up shortly.", "ok");
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Submission failed.";
-        setFeedback(message + " If this continues, email sales@theiaops.ai or set data-api-base-url to your control-plane URL.", "error");
+        setFeedback(
+          message +
+            " If this continues, email sales@theiaops.ai or set data-api-base-url to your control-plane URL.",
+          "error"
+        );
       } finally {
-        if (submitButton instanceof HTMLButtonElement) {
-          submitButton.disabled = false;
-        }
+        setSubmitBusy(false);
       }
     });
   }
@@ -911,11 +1154,19 @@
         state.hoverIndex = index;
         renderLineChart(container, legendNode, definition, state);
       });
+      hitArea.addEventListener("pointerdown", function (event) {
+        event.preventDefault();
+        state.hoverIndex = state.hoverIndex === index ? null : index;
+        renderLineChart(container, legendNode, definition, state);
+      });
       hitArea.addEventListener("focus", function () {
         state.hoverIndex = index;
         renderLineChart(container, legendNode, definition, state);
       });
-      hitArea.addEventListener("pointerleave", function () {
+      hitArea.addEventListener("pointerleave", function (event) {
+        if (event.pointerType === "touch") {
+          return;
+        }
         state.hoverIndex = null;
         renderLineChart(container, legendNode, definition, state);
       });
@@ -1065,8 +1316,21 @@
         };
 
         bar.addEventListener("pointerenter", showBarTooltip);
+        bar.addEventListener("pointerdown", function (event) {
+          event.preventDefault();
+          if (state.hoverIndex === index && state.hoverSeriesId === item.id) {
+            hideBarTooltip();
+            return;
+          }
+          showBarTooltip();
+        });
         bar.addEventListener("focus", showBarTooltip);
-        bar.addEventListener("pointerleave", hideBarTooltip);
+        bar.addEventListener("pointerleave", function (event) {
+          if (event.pointerType === "touch") {
+            return;
+          }
+          hideBarTooltip();
+        });
         bar.addEventListener("blur", hideBarTooltip);
 
         svg.appendChild(bar);
