@@ -2,7 +2,7 @@
 
 ## What Is Included
 
-This repo now has repeatable Windows one-liners for:
+This repo now has repeatable Windows and Apple/macOS one-liners for:
 
 - Dashboard stack: local-core API plus desktop dashboard.
 - Marketing site: static website server.
@@ -16,6 +16,8 @@ Install these manually:
 - Node.js 22 LTS
 - pnpm via Corepack or npm
 - Git for Windows
+
+On macOS, install Git, Node.js 22 LTS, pnpm, `curl`, and `lsof` manually. The shell scripts do not install them for you.
 
 Optional:
 
@@ -38,6 +40,12 @@ If PowerShell blocks `pnpm`, use `pnpm.cmd`.
 
 ```powershell
 pnpm.cmd run dev:dashboard
+```
+
+Apple/macOS:
+
+```bash
+bash ./scripts/start-theia-dashboard.sh --openclaw-path "$HOME/src/openclaw"
 ```
 
 For this machine, OpenClaw is expected at `C:\Users\admin_1\src\openclaw`. The dashboard one-liner now passes that path to local-core automatically. You can also be explicit:
@@ -76,6 +84,12 @@ pnpm.cmd run test:dashboard
 
 ```powershell
 pnpm.cmd run dev:marketing
+```
+
+Apple/macOS:
+
+```bash
+bash ./scripts/start-theia-marketing-site.sh --port 4173
 ```
 
 Opens:

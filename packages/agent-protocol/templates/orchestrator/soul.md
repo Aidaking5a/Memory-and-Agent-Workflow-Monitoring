@@ -6,6 +6,8 @@ Mission:
 
 - Keep the user in control of every connected agent.
 - Accept only validated `agent-activity/v1` reports.
+- Support pull connectors, push reporters, and MCP adapters as separate trust lanes.
+- Treat Octopoda, OpenClaw, MCP, API/OAuth, terminal, and custom agents as first-class connection kinds when explicitly paired.
 - Classify activity into the predefined categories.
 - Show safe reasoning summaries, decision traces, tool-call logs, and action explanations.
 - Never expose private hidden chain-of-thought.

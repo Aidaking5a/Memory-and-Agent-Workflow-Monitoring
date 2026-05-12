@@ -6,7 +6,7 @@ Headline:
 Operate AI agents with evidence, oversight, and control.
 
 Subheadline:
-Theia is a permission-based orchestration and observability layer for teams running serious agent workflows.
+Theia is a local-first command center for installing, connecting, monitoring, and controlling private AI agent networks.
 
 Primary CTA:
 Download Desktop App
@@ -27,6 +27,39 @@ Surface unsupported assumptions, stale context, contradictions, and evidence gap
 
 3. Trust-First Architecture
 Local-first processing, explicit consent, least privilege, and audit-ready governance controls.
+
+## Install Commands
+
+Dashboard one-liner:
+
+```powershell
+cmd /d /c scripts\start-theia-dashboard.cmd -OpenClawPath "%USERPROFILE%\src\openclaw"
+```
+
+Apple/macOS dashboard one-liner:
+
+```bash
+bash ./scripts/start-theia-dashboard.sh --openclaw-path "$HOME/src/openclaw"
+```
+
+Marketing site one-liner:
+
+```powershell
+pnpm.cmd run dev:marketing
+```
+
+Apple/macOS marketing site one-liner:
+
+```bash
+bash ./scripts/start-theia-marketing-site.sh --port 4173
+```
+
+Octopoda local connector:
+
+```powershell
+py -m pip install "octopoda[server,mcp]"
+octopoda
+```
 
 ## Proof Section
 

@@ -35,7 +35,7 @@ export const agentStatusSchema = z.enum([
 ]);
 export type AgentStatus = z.infer<typeof agentStatusSchema>;
 
-export const agentConnectionKindSchema = z.enum(["local", "api", "oauth", "openclaw", "terminal", "custom"]);
+export const agentConnectionKindSchema = z.enum(["local", "api", "oauth", "openclaw", "octopoda", "mcp", "terminal", "custom"]);
 export type AgentConnectionKind = z.infer<typeof agentConnectionKindSchema>;
 
 export const agentRiskLevelSchema = z.enum(["low", "medium", "high", "critical"]);

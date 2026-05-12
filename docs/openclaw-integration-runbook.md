@@ -71,6 +71,24 @@ $env:THEIA_OPENCLAW_TELEMETRY_ENDPOINT="http://localhost:4318/openclaw/telemetry
    - live stream status = `live`
    - OpenClaw telemetry history receives events
 
+## Theia Command Center Skill
+
+The connector strategy now includes a small OpenClaw-side skill that reports strict `agent-activity/v1` events into the main Agent Command Center.
+
+Install into the default workspace:
+
+```powershell
+python ".\integrations\openclaw\theia-command-center-skill\install.py" --openclaw-path "C:\Users\admin_1\src\openclaw" --endpoint "http://localhost:4318/agent-network/telemetry/events" --agent-id "agent:openclaw"
+```
+
+Then register `agent:openclaw` in the Theia `Live Reporting Dashboard`, copy the shown telemetry token into the installed `.theia-command-center.json`, and validate:
+
+```powershell
+python "C:\Users\admin_1\src\openclaw\skills\theia-command-center\scripts\report.py" heartbeat
+```
+
+The skill does not expose arbitrary shell execution. It only reports safe summaries and reads visible steering commands.
+
 Notes:
 
 - `/v1` OpenAI-compatible endpoint is inference API, not a workflow event feed.

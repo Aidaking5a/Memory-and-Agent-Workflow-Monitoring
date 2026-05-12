@@ -167,10 +167,22 @@ Dashboard-only one-liner (local core + desktop dashboard, no Docker/Keycloak/con
 pnpm.cmd run dev:dashboard
 ```
 
+Apple/macOS dashboard one-liner from a clone:
+
+```bash
+bash ./scripts/start-theia-dashboard.sh --openclaw-path "$HOME/src/openclaw"
+```
+
 Marketing-site one-liner (static site only):
 
 ```powershell
 pnpm.cmd run dev:marketing
+```
+
+Apple/macOS marketing-site one-liner:
+
+```bash
+bash ./scripts/start-theia-marketing-site.sh --port 4173
 ```
 
 If another process is blocking `localhost:5173`, reclaim it automatically for Theia desktop:
@@ -224,10 +236,16 @@ Core endpoints:
 - `POST /agent-network/agents`
 - `POST /agent-network/discover`
 - `POST /agent-network/telemetry/events`
+- `GET /agent-network/commands`
+- `POST /agent-network/commands/:commandId/ack`
 - `GET /agent-network/stream`
 - `POST /agent-network/control`
 - `POST /agent-network/links`
 - `POST /agent-network/links/:linkId/break`
+- `POST /setup/connectors/discover`
+- `POST /setup/connectors/connect`
+- `GET /setup/connectors/status`
+- `POST /agent-network/connectors/:connectorId/validate`
 
 Private agents report with the `agent-activity/v1` schema from `packages/agent-protocol`. Reports include what the agent is doing, where it is working, how it is working, resource usage, status, risk, safe reasoning summaries, decision traces, and tool-call logs. Hidden chain-of-thought should never be reported.
 
@@ -240,8 +258,26 @@ The desktop app now exposes only three customer-facing command-center views:
 Architecture and protocol details:
 
 - `docs/agent-command-center-architecture.md`
+- `docs/octopoda-connector-runbook.md`
 - `packages/agent-protocol/templates/orchestrator/soul.md`
 - `packages/agent-protocol/templates/orchestrator/memory.md`
+
+## Connector Strategy
+
+Theia now supports three connector lanes:
+
+- Pull connectors for local services, local logs, local files, and Octopoda local/cloud registry reads.
+- Push reporters for agents that POST `agent-activity/v1` events with per-agent pairing tokens.
+- MCP adapters for Claude/Cursor/Windsurf/Codex-compatible clients that can report activity and read visible steering commands.
+
+Octopoda support is first-class: use the dashboard `Connect Agent` panel to discover `http://localhost:7842`, pair the local connector, and validate. Cloud mode is opt-in with `THEIA_OCTOPODA_API_KEY` and an HTTPS allowlisted base URL.
+
+Adapter kits:
+
+- TypeScript: `packages/connector-sdk/src/theia-reporter.ts`
+- Python stdlib: `integrations/python/theia_reporter.py`
+- OpenClaw skill: `integrations/openclaw/theia-command-center-skill`
+- MCP server: `integrations/mcp/theia-mcp-server.mjs`
 
 ## Distribution Strategy
 
@@ -257,6 +293,12 @@ One-line bootstrap from a trusted checkout:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-theia-command-center.ps1
 ```
 
+Apple/macOS one-line bootstrap from a trusted checkout:
+
+```bash
+bash ./scripts/install-theia-command-center.sh --build-dashboard --start-after-install
+```
+
 Run the local dashboard stack with the OpenClaw install rooted at `C:\Users\admin_1\src\openclaw`:
 
 ```powershell
@@ -269,7 +311,20 @@ One-line bootstrap from GitHub after reviewing the script URL and repository:
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://raw.githubusercontent.com/aidaking5a/Memory-and-Agent-Workflow-Monitoring/main/scripts/install-theia-command-center.ps1'; $p=Join-Path $env:TEMP 'install-theia-command-center.ps1'; Invoke-WebRequest $u -OutFile $p; powershell -NoProfile -ExecutionPolicy Bypass -File $p"
 ```
 
+Apple/macOS bootstrap from GitHub after reviewing the script URL and repository:
+
+```bash
+u="https://raw.githubusercontent.com/aidaking5a/Memory-and-Agent-Workflow-Monitoring/main/scripts/install-theia-command-center.sh"; p="/tmp/install-theia-command-center.sh"; curl -fsSL "$u" -o "$p"; sed -n '1,180p' "$p"; bash "$p" --build-dashboard --start-after-install
+```
+
 The installer/bootstrap path should not silently install Node, Rust, Visual Studio Build Tools, Docker, WSL, or paid API connectors. Prompt before privileged installs and keep clone-based setup available for OpenClaw-style developers.
+
+Apple ecosystem involvement plan:
+
+1. MVP: shell one-liners for macOS clone/install/start paths, plus `.dmg` packaging through Tauri.
+2. Next: signed and notarized Developer ID `.dmg` with a clear first-run local-core permission flow.
+3. Then: optional LaunchAgent for user-approved background local-core startup, plus Apple Shortcuts deep links for dashboard open, emergency stop, and status checks.
+4. Later: Homebrew cask distribution after signing/notarization is stable.
 
 ## Lead Intake And Tracking
 

@@ -908,6 +908,104 @@ tbody tr:hover {
   overflow-wrap: anywhere;
 }
 
+.connector-strategy-panel {
+  grid-column: span 2;
+}
+
+.connector-path-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.64rem;
+  margin-top: 0.7rem;
+}
+
+.connector-path-card {
+  border: 1px solid rgba(63, 211, 155, 0.2);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(63, 211, 155, 0.16), transparent 38%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)),
+    #0b1010;
+  padding: 0.72rem;
+  display: grid;
+  gap: 0.54rem;
+  min-width: 0;
+}
+
+.connector-path-card.offline {
+  border-color: rgba(255, 90, 95, 0.24);
+}
+
+.connector-path-topline,
+.connector-path-actions,
+.connector-mini-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.connector-path-topline {
+  justify-content: space-between;
+}
+
+.connector-path-topline > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.connector-path-topline strong,
+.connector-path-topline small,
+.connector-mini-meta span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connector-path-topline small,
+.connector-mini-meta {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.connector-kind-orb {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex: 0 0 38px;
+  border: 1px solid rgba(63, 211, 155, 0.46);
+  background: rgba(63, 211, 155, 0.12);
+  color: #9cf0ca;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.connector-mini-meta {
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.connector-path-actions {
+  flex-wrap: wrap;
+}
+
+.connector-command-preview {
+  display: block;
+  max-height: 104px;
+  overflow: auto;
+  border: 1px solid rgba(63, 211, 155, 0.2);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.28);
+  padding: 0.48rem;
+  color: #caefd9;
+  font-size: 0.7rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .command-center-header {
   display: flex;
   justify-content: space-between;
