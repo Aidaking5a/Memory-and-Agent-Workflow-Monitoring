@@ -3,6 +3,8 @@ import type {
   AuthSessionPayload,
   AgentNetworkControlAction,
   AgentNetworkSnapshot,
+  ConnectorDiscoveryCandidate,
+  ConnectorRegistrationView,
   DashboardData,
   OpenClawPairingCommands,
   OpenClawPairingView,
@@ -12,13 +14,15 @@ import type {
 } from "./types";
 
 const DEFAULT_BASE_URL = "http://localhost:4318";
+const DEFAULT_CORE_PORT = 4318;
 const OPERATOR_ROLE_STORAGE_KEY = "theia.operator.role";
 const OPERATOR_ID_STORAGE_KEY = "theia.operator.id";
 const AUTH_TOKEN_STORAGE_KEY = "theia.auth.token";
 const AUTH_USER_STORAGE_KEY = "theia.auth.user";
+const CORE_URL_STORAGE_KEY = "theia.core.url";
 
 function coreBaseUrl(): string {
-  return import.meta.env.VITE_THEIA_CORE_URL ?? DEFAULT_BASE_URL;
+  return normalizeBaseUrl(import.meta.env.VITE_THEIA_CORE_URL ?? window.localStorage.getItem(CORE_URL_STORAGE_KEY) ?? DEFAULT_BASE_URL);
 }
 
 function envOperatorId(): string {
@@ -169,18 +173,66 @@ async function putJson<TResponse>(path: string, body: Record<string, unknown>): 
 }
 
 async function fetchCore(path: string, init: RequestInit): Promise<Response> {
-  const url = `${coreBaseUrl()}${path}`;
+  const candidates = coreBaseUrlCandidates();
+  const failures: string[] = [];
   try {
-    return await fetch(url, init);
+    for (const baseUrl of candidates) {
+      try {
+        const response = await fetch(`${baseUrl}${path}`, init);
+        rememberCoreBaseUrl(baseUrl);
+        return response;
+      } catch (error) {
+        failures.push(`${baseUrl}: ${error instanceof Error ? error.message : "failed"}`);
+      }
+    }
+    throw new Error("All local core candidates failed.");
   } catch (error) {
-    throw new Error(connectionFailureMessage(error));
+    throw new Error(connectionFailureMessage(error, candidates, failures));
   }
 }
 
-function connectionFailureMessage(error: unknown): string {
+function coreBaseUrlCandidates(): string[] {
+  const configured = coreBaseUrl();
+  const candidates = [
+    configured,
+    window.localStorage.getItem(CORE_URL_STORAGE_KEY) ?? "",
+    DEFAULT_BASE_URL,
+    "http://127.0.0.1:4318"
+  ];
+  const host = window.location.hostname;
+  if (host && host !== "localhost" && host !== "127.0.0.1") {
+    candidates.push(`http://${host}:${DEFAULT_CORE_PORT}`);
+  }
+  return Array.from(new Set(candidates.map(normalizeBaseUrl).filter(Boolean)));
+}
+
+function normalizeBaseUrl(value: string | null | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return DEFAULT_BASE_URL;
+  return trimmed.replace(/\/+$/, "");
+}
+
+function rememberCoreBaseUrl(value: string): void {
+  try {
+    window.localStorage.setItem(CORE_URL_STORAGE_KEY, normalizeBaseUrl(value));
+  } catch {
+    // localStorage can be unavailable in hardened webviews.
+  }
+}
+
+function connectionFailureMessage(error: unknown, candidates = coreBaseUrlCandidates(), failures: string[] = []): string {
   const baseUrl = coreBaseUrl();
   const detail = error instanceof Error && error.message.trim().length > 0 ? ` Browser detail: ${error.message}` : "";
-  return `Unable to reach Theia local core at ${baseUrl}. Start it with \`cmd /d /c scripts\\start-theia-dashboard.cmd -OpenClawPath "%USERPROFILE%\\src\\openclaw"\` and make sure THEIA_ALLOWED_ORIGINS includes this dashboard URL.${detail}`;
+  const currentOrigin = window.location.origin;
+  const httpsBlocked =
+    window.location.protocol === "https:" &&
+    candidates.some((candidate) => candidate.startsWith("http://localhost") || candidate.startsWith("http://127.0.0.1"));
+  const mixedContentHint = httpsBlocked
+    ? " This page is running over HTTPS, so the browser may block plain HTTP localhost requests. Open the local dashboard at http://localhost:5173 or run local-core behind an HTTPS tunnel and set VITE_THEIA_CORE_URL to that URL."
+    : "";
+  const tried = candidates.length > 1 ? ` Tried: ${candidates.join(", ")}.` : "";
+  const failureDetail = failures.length > 0 ? ` Details: ${failures.slice(0, 3).join(" | ")}.` : "";
+  return `Unable to reach Theia local core from ${currentOrigin}. Primary core URL: ${baseUrl}.${tried} Start it with \`cmd /d /c scripts\\start-theia-dashboard.cmd -OpenClawPath "%USERPROFILE%\\src\\openclaw"\` and make sure THEIA_ALLOWED_ORIGINS includes this dashboard URL.${mixedContentHint}${detail}${failureDetail}`;
 }
 
 export async function loadDashboardData(): Promise<DashboardData> {
@@ -189,6 +241,7 @@ export async function loadDashboardData(): Promise<DashboardData> {
     const connection = (payload.connection ?? {}) as Partial<DashboardData["connection"]>;
     const openClawLive = (payload.openClawLive ?? {}) as Partial<DashboardData["openClawLive"]>;
     const agentNetwork = (payload.agentNetwork ?? {}) as Partial<DashboardData["agentNetwork"]>;
+    const connectorStrategy = (payload.connectorStrategy ?? {}) as Partial<DashboardData["connectorStrategy"]>;
     return {
       ...emptyDashboardData,
       ...payload,
@@ -256,6 +309,13 @@ export async function loadDashboardData(): Promise<DashboardData> {
         links: agentNetwork.links ?? emptyDashboardData.agentNetwork.links,
         events: agentNetwork.events ?? emptyDashboardData.agentNetwork.events,
         commands: agentNetwork.commands ?? emptyDashboardData.agentNetwork.commands
+      },
+      connectorStrategy: {
+        ...emptyDashboardData.connectorStrategy,
+        ...connectorStrategy,
+        connectors: connectorStrategy.connectors ?? emptyDashboardData.connectorStrategy.connectors,
+        candidates: connectorStrategy.candidates ?? emptyDashboardData.connectorStrategy.candidates,
+        commands: connectorStrategy.commands ?? emptyDashboardData.connectorStrategy.commands
       },
       operator: { ...emptyDashboardData.operator, ...(payload.operator ?? {}) },
       notificationCenter: payload.notificationCenter ?? emptyDashboardData.notificationCenter
@@ -334,6 +394,46 @@ export async function discoverAgentNetwork(workspacePath?: string): Promise<{
   manual: Array<Record<string, unknown>>;
 }> {
   return postJson("/agent-network/discover", workspacePath ? { workspacePath } : {});
+}
+
+export async function loadConnectorStatus(): Promise<{
+  generatedAt: string;
+  connectors: ConnectorRegistrationView[];
+  commands: DashboardData["connectorStrategy"]["commands"];
+}> {
+  return getJson("/setup/connectors/status");
+}
+
+export async function discoverConnectorStrategy(): Promise<{
+  generatedAt: string;
+  candidates: ConnectorDiscoveryCandidate[];
+  registered: ConnectorRegistrationView[];
+}> {
+  return postJson("/setup/connectors/discover", {});
+}
+
+export async function connectConnector(candidate: ConnectorDiscoveryCandidate): Promise<{
+  connector: ConnectorRegistrationView;
+  connectors: ConnectorRegistrationView[];
+}> {
+  return postJson("/setup/connectors/connect", {
+    connectorId: candidate.connectorId,
+    kind: candidate.kind,
+    displayName: candidate.displayName,
+    lane: candidate.lane,
+    mode: candidate.mode,
+    endpointLabel: candidate.endpointLabel,
+    authKind: candidate.authKind
+  });
+}
+
+export async function validateConnector(connectorId: string): Promise<{
+  connector: ConnectorRegistrationView;
+  connectors: ConnectorRegistrationView[];
+  snapshot: AgentNetworkSnapshot;
+  syncedEvents: number;
+}> {
+  return postJson(`/agent-network/connectors/${encodeURIComponent(connectorId)}/validate`, {});
 }
 
 export async function sendAgentControlCommand(input: {

@@ -15,6 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@theia/agent-protocol": "workspace:*",
     "@theia/event-schema": "workspace:*"
   }
 }

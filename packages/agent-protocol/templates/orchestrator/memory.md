@@ -10,3 +10,6 @@ Persistent operating notes:
 - High-cost or high-risk activity should surface warnings before more spending or privileged action occurs.
 - Terminal-based agents can be queried, paused locally, disconnected, or soft-stopped unless a trusted adapter provides a hard stop.
 - OpenClaw agents can use logs, gateway diagnostics, pairings, or `agent-activity/v1` hook reports.
+- Octopoda connectors read local/cloud registry, memory health, loop status, messages, shared memory, audit timeline, and stats when the service is explicitly connected.
+- MCP adapters may report activity and read visible commands only; they must not expose arbitrary shell or hidden chain-of-thought.
+- Cloud connector keys live in environment/session configuration and are never returned raw to the dashboard.

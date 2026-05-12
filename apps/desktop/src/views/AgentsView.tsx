@@ -41,15 +41,19 @@ import {
 } from "lucide-react";
 import {
   breakAgentLink,
+  connectConnector,
   createOpenClawPairing,
   discoverAgentNetwork,
+  discoverConnectorStrategy,
   loadAgentNetworkSnapshot,
+  loadConnectorStatus,
   listOpenClawPairings,
   makeAgentLink,
   registerPrivateAgent,
   revokeOpenClawPairing,
   sendAgentControlCommand,
-  subscribeAgentNetworkStream
+  subscribeAgentNetworkStream,
+  validateConnector
 } from "../api";
 import type {
   AgentCommandCenterAgent,
@@ -57,6 +61,8 @@ import type {
   AgentConnectionKind,
   AgentControlLevel,
   AgentNetworkSnapshot,
+  ConnectorDiscoveryCandidate,
+  ConnectorRegistrationView,
   DashboardData,
   OpenClawPairingCommands,
   OpenClawPairingView,
@@ -145,13 +151,20 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
     commands: OpenClawPairingCommands;
   }>();
   const [manualDiscoveries, setManualDiscoveries] = useState<Array<Record<string, unknown>>>([]);
+  const [connectorCandidates, setConnectorCandidates] = useState<ConnectorDiscoveryCandidate[]>(data.connectorStrategy.candidates ?? []);
+  const [connectorRegistrations, setConnectorRegistrations] = useState<ConnectorRegistrationView[]>(data.connectorStrategy.connectors);
+  const [connectorBusy, setConnectorBusy] = useState<string | undefined>();
 
   useEffect(() => {
     setNetwork(data.agentNetwork);
+    setConnectorRegistrations(data.connectorStrategy.connectors);
+    if (data.connectorStrategy.candidates?.length) {
+      setConnectorCandidates(data.connectorStrategy.candidates);
+    }
     if (!selectedAgentId && data.agentNetwork.agents[0]) {
       setSelectedAgentId(data.agentNetwork.agents[0].agentId);
     }
-  }, [data.agentNetwork, selectedAgentId]);
+  }, [data.agentNetwork, data.connectorStrategy, selectedAgentId]);
 
   useEffect(() => {
     const unsubscribe = subscribeAgentNetworkStream({
@@ -223,6 +236,56 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
   const refreshNetwork = async () => {
     const next = await loadAgentNetworkSnapshot();
     setNetwork(next);
+  };
+
+  const refreshConnectorStatus = async () => {
+    const status = await loadConnectorStatus();
+    setConnectorRegistrations(status.connectors);
+  };
+
+  const handleDiscoverConnectors = async () => {
+    setConnectorBusy("discover");
+    setFeedback(undefined);
+    try {
+      const result = await discoverConnectorStrategy();
+      setConnectorCandidates(result.candidates);
+      setConnectorRegistrations(result.registered);
+      setFeedback({ kind: "success", message: `${result.candidates.length} connector path(s) checked.` });
+    } catch (error) {
+      setFeedback({ kind: "error", message: connectorErrorMessage(error) });
+    } finally {
+      setConnectorBusy(undefined);
+    }
+  };
+
+  const handleConnectConnector = async (candidate: ConnectorDiscoveryCandidate) => {
+    setConnectorBusy(candidate.connectorId);
+    setFeedback(undefined);
+    try {
+      const result = await connectConnector(candidate);
+      setConnectorRegistrations(result.connectors);
+      setFeedback({ kind: "success", message: `${result.connector.displayName} is paired with Theia. Validate when the service is ready.` });
+    } catch (error) {
+      setFeedback({ kind: "error", message: connectorErrorMessage(error) });
+    } finally {
+      setConnectorBusy(undefined);
+    }
+  };
+
+  const handleValidateConnector = async (connectorId: string) => {
+    setConnectorBusy(connectorId);
+    setFeedback(undefined);
+    try {
+      const result = await validateConnector(connectorId);
+      setConnectorRegistrations(result.connectors);
+      setNetwork(result.snapshot);
+      setFeedback({ kind: "success", message: `${result.connector.displayName} validated. ${result.syncedEvents} event(s) synced.` });
+    } catch (error) {
+      setFeedback({ kind: "error", message: connectorErrorMessage(error) });
+      await refreshConnectorStatus().catch(() => undefined);
+    } finally {
+      setConnectorBusy(undefined);
+    }
   };
 
   async function refreshOpenClawPairings(silent = false) {
@@ -785,6 +848,8 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
                 <option value="api">api</option>
                 <option value="oauth">oauth</option>
                 <option value="openclaw">openclaw</option>
+                <option value="octopoda">octopoda</option>
+                <option value="mcp">mcp</option>
                 <option value="terminal">terminal</option>
                 <option value="custom">custom</option>
               </select>
@@ -835,6 +900,16 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
           ) : null}
         </article>
 
+        <ConnectorStrategyPanel
+          candidates={connectorCandidates}
+          connectors={connectorRegistrations}
+          busyId={connectorBusy}
+          onDiscover={handleDiscoverConnectors}
+          onConnect={handleConnectConnector}
+          onValidate={handleValidateConnector}
+          onCopy={copyText}
+        />
+
         <article className="panel">
           <h3>Activity</h3>
           <div className="timeline command-timeline">
@@ -870,7 +945,109 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
   );
 }
 
+function ConnectorStrategyPanel({
+  candidates,
+  connectors,
+  busyId,
+  onDiscover,
+  onConnect,
+  onValidate,
+  onCopy
+}: {
+  candidates: ConnectorDiscoveryCandidate[];
+  connectors: ConnectorRegistrationView[];
+  busyId?: string;
+  onDiscover: () => void;
+  onConnect: (candidate: ConnectorDiscoveryCandidate) => void;
+  onValidate: (connectorId: string) => void;
+  onCopy: (text: string, successMessage: string) => void;
+}) {
+  const rows = candidates.length > 0
+    ? candidates
+    : connectors.map((connector) => ({
+        connectorId: connector.connectorId,
+        kind: connector.kind,
+        displayName: connector.displayName,
+        lane: connector.lane,
+        mode: connector.mode,
+        endpointLabel: connector.endpointLabel,
+        authKind: connector.authKind,
+        status: connector.status,
+        confidence: connector.status === "healthy" ? 0.94 : 0.62,
+        message: connector.message ?? "Connector registered.",
+        commands: connector.commands
+      }));
+
+  return (
+    <article className="panel connector-strategy-panel">
+      <div className="panel-header-row">
+        <div>
+          <h3>Connect Agent</h3>
+          <p className="muted-note">Octopoda, OpenClaw skill, MCP, API/OAuth, terminal, or custom JSON telemetry.</p>
+        </div>
+        <button className="action-btn neutral" disabled={Boolean(busyId)} onClick={onDiscover}>
+          <RefreshCw size={15} />
+          Discover
+        </button>
+      </div>
+      <div className="connector-path-grid">
+        {rows.map((candidate) => {
+          const registration = connectors.find((connector) => connector.connectorId === candidate.connectorId);
+          const live = registration?.status === "healthy";
+          const connecting = busyId === candidate.connectorId;
+          const commandText = stringifyConnectorCommands(registration?.commands ?? candidate.commands);
+          return (
+            <article className={`connector-path-card ${candidate.status}`} key={candidate.connectorId}>
+              <div className="connector-path-topline">
+                <span className="connector-kind-orb">{connectionGlyph(candidate.kind)}</span>
+                <div>
+                  <strong>{candidate.displayName}</strong>
+                  <small>{candidate.lane.toUpperCase()} / {candidate.mode} / {candidate.authKind}</small>
+                </div>
+                <span className={`agent-state-pill ${live ? "active" : candidate.status === "offline" ? "stopped" : "warning"}`}>
+                  {live ? "live" : registration ? registration.status : candidate.status}
+                </span>
+              </div>
+              <p className="muted-note">{registration?.message ?? candidate.message}</p>
+              <div className="connector-mini-meta">
+                <span>{candidate.endpointLabel ?? "local core"}</span>
+                <span>{registration ? "paired" : "not paired"}</span>
+              </div>
+              <div className="connector-path-actions">
+                {registration ? (
+                  <button className="action-btn primary" disabled={connecting} onClick={() => onValidate(registration.connectorId)}>
+                    <CheckCircle size={15} />
+                    {connecting ? "Validating..." : "Validate"}
+                  </button>
+                ) : (
+                  <button className="action-btn primary" disabled={connecting} onClick={() => onConnect(candidate)}>
+                    <PlugZap size={15} />
+                    {connecting ? "Pairing..." : "Pair"}
+                  </button>
+                )}
+                {commandText ? (
+                  <button className="action-btn neutral" disabled={connecting} onClick={() => onCopy(commandText, "Connector command copied.")}>
+                    <Copy size={15} />
+                    Copy
+                  </button>
+                ) : null}
+              </div>
+              {commandText ? <code className="connector-command-preview">{commandText}</code> : null}
+            </article>
+          );
+        })}
+        {rows.length === 0 ? (
+          <p className="muted-note">Run discovery to generate the customer-facing install, pairing, and validation paths.</p>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
 function AgentStatsBreakdown({ network }: { network: AgentNetworkSnapshot }) {
+  const octopodaAgents = network.agents.filter((agent) => agent.connectionKind === "octopoda");
+  const octopodaRuntimeMs = octopodaAgents.reduce((sum, agent) => sum + agent.stats.runtimeMs, 0);
+  const octopodaLogBytes = octopodaAgents.reduce((sum, agent) => sum + agent.stats.logBytes, 0);
   return (
     <section className="panel-grid stats-only-grid">
       <article className="panel">
@@ -896,6 +1073,18 @@ function AgentStatsBreakdown({ network }: { network: AgentNetworkSnapshot }) {
           <div className="stat-chip"><span>Log Volume</span><strong>{formatBytes(network.stats.logBytes)}</strong></div>
         </div>
       </article>
+
+      {octopodaAgents.length > 0 ? (
+        <article className="panel">
+          <h3>Octopoda Memory Runtime</h3>
+          <div className="stat-grid-compact">
+            <div className="stat-chip"><span>Agents Synced</span><strong>{octopodaAgents.length}</strong></div>
+            <div className="stat-chip"><span>Runtime Observed</span><strong>{formatDuration(octopodaRuntimeMs)}</strong></div>
+            <div className="stat-chip"><span>Memory / Audit Volume</span><strong>{formatBytes(octopodaLogBytes)}</strong></div>
+            <div className="stat-chip"><span>Connector Mode</span><strong>{octopodaAgents[0]?.endpointLabel ?? "Octopoda"}</strong></div>
+          </div>
+        </article>
+      ) : null}
 
       <article className="panel stats-breakdown-wide">
         <h3>Per-Agent Breakdown</h3>
@@ -1917,6 +2106,32 @@ function formatDateTime(value: string | undefined): string {
   });
 }
 
+function stringifyConnectorCommands(commands: ConnectorRegistrationView["commands"] | undefined): string {
+  if (!commands) return "";
+  const lines: string[] = [];
+  if (commands.install?.length) lines.push(...commands.install);
+  if (commands.start?.length) lines.push(...commands.start);
+  if (commands.powershell?.length) lines.push(...commands.powershell);
+  if (commands.validate?.length) lines.push(...commands.validate);
+  if (commands.mcpConfig) lines.push(JSON.stringify(commands.mcpConfig, null, 2));
+  return lines.join("\n\n");
+}
+
+function connectorErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Connector request failed.";
+  const lowered = message.toLowerCase();
+  if (lowered.includes("failed to fetch") || lowered.includes("unable to reach")) {
+    return `${message} Recovery: start Theia local core, then start the connector service and validate again.`;
+  }
+  if (lowered.includes("auth") || lowered.includes("401") || lowered.includes("403")) {
+    return `${message} Recovery: rotate the agent token or set THEIA_OCTOPODA_API_KEY for cloud mode.`;
+  }
+  if (lowered.includes("schema") || lowered.includes("invalid")) {
+    return `${message} Recovery: update the adapter or switch to the agent-activity/v1 reporter helper.`;
+  }
+  return message;
+}
+
 function eventIcon(category: string): string {
   const icons: Record<string, string> = {
     coding: "DEV",
@@ -1955,6 +2170,10 @@ function connectionGlyph(kind: AgentConnectionKind): string {
   switch (kind) {
     case "openclaw":
       return "OC";
+    case "octopoda":
+      return "OCT";
+    case "mcp":
+      return "MCP";
     case "terminal":
       return "TM";
     case "oauth":

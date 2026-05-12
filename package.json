@@ -13,7 +13,9 @@
     "dev:desktop:tauri": "pnpm --filter @theia/desktop tauri:dev",
     "dev:website": "node ./scripts/serve-website.mjs",
     "dev:dashboard": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-theia-dashboard.ps1",
+    "dev:dashboard:unix": "bash ./scripts/start-theia-dashboard.sh",
     "dev:marketing": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-theia-marketing-site.ps1",
+    "dev:marketing:unix": "bash ./scripts/start-theia-marketing-site.sh",
     "dev:core": "pnpm --filter @theia/local-core dev",
     "dev:control-plane": "pnpm --filter @theia/control-plane dev",
     "build:desktop:installer": "pnpm --filter @theia/desktop tauri:build",
@@ -28,6 +30,7 @@
     "test:dashboard": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/test-theia-local-infra.ps1 -SkipMarketing",
     "test:marketing": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/test-theia-local-infra.ps1 -SkipCore -SkipDashboard",
     "install:command-center": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/install-theia-command-center.ps1",
+    "install:command-center:unix": "bash ./scripts/install-theia-command-center.sh",
     "domain:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/prepare-custom-domain.ps1"
   },
   "devDependencies": {

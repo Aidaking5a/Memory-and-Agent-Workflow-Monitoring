@@ -72,6 +72,48 @@ export interface SetupState {
   };
 }
 
+export type ConnectorLane = "pull" | "push" | "mcp";
+export type ConnectorMode = "local" | "cloud";
+export type ConnectorAuthKind = "none" | "api_key" | "pairing_token" | "oauth" | "local_session";
+
+export interface ConnectorRegistrationView {
+  connectorId: string;
+  kind: AgentConnectionKind;
+  displayName: string;
+  lane: ConnectorLane;
+  mode: ConnectorMode;
+  endpointLabel?: string;
+  authKind: ConnectorAuthKind;
+  hasSecret: boolean;
+  capabilities: string[];
+  status: "healthy" | "degraded" | "offline";
+  message?: string;
+  lastValidatedAt?: string;
+  updatedAt: string;
+  commands?: {
+    install?: string[];
+    start?: string[];
+    validate?: string[];
+    powershell?: string[];
+    bash?: string[];
+    mcpConfig?: Record<string, unknown>;
+  };
+}
+
+export interface ConnectorDiscoveryCandidate {
+  connectorId: string;
+  kind: AgentConnectionKind;
+  displayName: string;
+  lane: ConnectorLane;
+  mode: ConnectorMode;
+  endpointLabel?: string;
+  authKind: ConnectorAuthKind;
+  status: "healthy" | "degraded" | "offline";
+  confidence: number;
+  message: string;
+  commands?: ConnectorRegistrationView["commands"];
+}
+
 export interface AgentHealth {
   agentId: string;
   name: string;
@@ -88,7 +130,7 @@ export interface AgentHealth {
   lastEventAt?: string;
 }
 
-export type AgentConnectionKind = "local" | "api" | "oauth" | "openclaw" | "terminal" | "custom";
+export type AgentConnectionKind = "local" | "api" | "oauth" | "openclaw" | "octopoda" | "mcp" | "terminal" | "custom";
 export type AgentControlLevel = "observe_only" | "query" | "pause_resume" | "steer" | "stop" | "full";
 export type AgentNetworkStatus =
   | "active"
@@ -831,6 +873,12 @@ export interface DashboardData {
   workloadSeries: WorkloadSeriesPoint[];
   comparison: ComparisonRow[];
   audit: AuditRow[];
+  connectorStrategy: {
+    connectors: ConnectorRegistrationView[];
+    candidates?: ConnectorDiscoveryCandidate[];
+    commands?: Record<string, ConnectorRegistrationView["commands"]>;
+    lastDiscoveredAt?: string;
+  };
   connectors: ConnectorRow[];
   plugins: PluginRow[];
   notificationCenter: NotificationCenterData;

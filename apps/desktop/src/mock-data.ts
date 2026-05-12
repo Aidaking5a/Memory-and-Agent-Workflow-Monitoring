@@ -136,6 +136,11 @@ export const emptyDashboardData: DashboardData = {
   workloadSeries: [],
   comparison: [],
   audit: [],
+  connectorStrategy: {
+    connectors: [],
+    candidates: [],
+    commands: {}
+  },
   connectors: [],
   plugins: [],
   notificationCenter: {

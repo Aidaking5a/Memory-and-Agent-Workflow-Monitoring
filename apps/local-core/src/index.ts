@@ -15,6 +15,16 @@ import { LocalAuthStore } from "./local-auth.js";
 import { OpsEmailNotifier } from "./ops-email.js";
 import { buildOpenClawPairingCreatedResponse } from "./openclaw-pairing-routes.js";
 import { OpenClawTelemetryHub } from "./openclaw-telemetry.js";
+import { OctopodaConnector, mapOctopodaAgentToActivityEvent } from "@theia/connector-sdk";
+import {
+    DEFAULT_OCTOPODA_CLOUD_URL,
+    DEFAULT_OCTOPODA_LOCAL_URL,
+    buildConnectorCommands,
+    buildConnectorDiscoveryCandidates,
+    connectorCapabilities,
+    redactConnectorRegistration,
+    validateConnectorEndpoint
+} from "./connector-setup.js";
 const execFileAsync = promisify(execFile);
 const workspaceId = process.env.THEIA_WORKSPACE_ID ?? "ws_local_default";
 const workspaceName = process.env.THEIA_WORKSPACE_NAME ?? "Theia Local Workspace";
@@ -33,6 +43,10 @@ const trustedGatewayRestartCommand = process.env.THEIA_OPENCLAW_RESTART_COMMAND?
 const defaultOpsAdminEmail = process.env.THEIA_OPS_ADMIN_EMAIL?.trim() || "windsurf345@outlook.com";
 const localCorePort = Number(process.env.THEIA_CORE_PORT ?? 4318);
 const localCoreBaseUrl = text(process.env.THEIA_LOCAL_CORE_BASE_URL) ?? `http://localhost:${localCorePort}`;
+const octopodaLocalBaseUrl = text(process.env.THEIA_OCTOPODA_LOCAL_URL) ?? DEFAULT_OCTOPODA_LOCAL_URL;
+const octopodaCloudBaseUrl = text(process.env.THEIA_OCTOPODA_BASE_URL) ?? DEFAULT_OCTOPODA_CLOUD_URL;
+const octopodaCloudApiKey = text(process.env.THEIA_OCTOPODA_API_KEY);
+const connectorAllowedEndpoints = parseList(process.env.THEIA_CONNECTOR_ALLOWED_ENDPOINTS ?? "");
 const corsPolicy = createCorsPolicy({
     allowedOrigins: process.env.THEIA_ALLOWED_ORIGINS
 });
@@ -87,6 +101,7 @@ const openClawTelemetry = new OpenClawTelemetryHub({
     dedupeWindowMs: openClawTelemetryDedupeWindowSeconds * 1000
 });
 const openClawSseSubscribers = new Set();
+const connectorRegistry = new Map();
 const agentNetworkMaxEvents = Math.max(500, Math.min(50000, num(process.env.THEIA_AGENT_NETWORK_MAX_EVENTS) ?? 8000));
 const agentRegistry = new Map();
 const agentSecrets = new Map();
@@ -194,7 +209,12 @@ app.addHook("preHandler", async (request, reply) => {
         return;
     }
     const url = request.url.split("?")[0] ?? request.url;
-    if (url === "/health" || url.startsWith("/auth/") || url === "/openclaw/telemetry/events" || url === "/agent-network/telemetry/events") {
+    if (url === "/health" ||
+        url.startsWith("/auth/") ||
+        url === "/openclaw/telemetry/events" ||
+        url === "/agent-network/telemetry/events" ||
+        url === "/agent-network/commands" ||
+        url.startsWith("/agent-network/commands/")) {
         return;
     }
     const token = bearerToken(request.headers?.authorization);
@@ -434,6 +454,113 @@ app.post("/setup/openclaw/connect", async (request, reply) => {
     }
 });
 app.post("/setup/openclaw/validate", async () => validateSetup(true));
+app.get("/setup/connectors/status", async (request) => ({
+    generatedAt: new Date().toISOString(),
+    operator: operatorContext(request),
+    connectors: serializeConnectorRegistry(),
+    commands: buildConnectorCommands({
+        repoRoot: process.cwd(),
+        localCoreBaseUrl,
+        openClawPath: defaultOpenClawInstallPath
+    })
+}));
+app.post("/setup/connectors/discover", async (request, reply) => {
+    const operator = operatorContext(request);
+    if (!requireCapability(reply, operator, "setup:write", "discover connector strategy")) {
+        return denyCapability(operator, "setup:write");
+    }
+    const octopodaLocalReachable = (await probeJson(`${octopodaLocalBaseUrl}/api/system/status`)).ok;
+    const candidates = buildConnectorDiscoveryCandidates({
+        repoRoot: process.cwd(),
+        localCoreBaseUrl,
+        openClawPath: defaultOpenClawInstallPath,
+        openClawExists: await isDir(defaultOpenClawInstallPath),
+        octopodaLocalReachable,
+        hasOctopodaCloudKey: Boolean(octopodaCloudApiKey)
+    });
+    return {
+        generatedAt: new Date().toISOString(),
+        operator,
+        candidates: candidates.map((candidate) => ({
+            ...candidate,
+            endpoint: undefined
+        })),
+        registered: serializeConnectorRegistry()
+    };
+});
+app.post("/setup/connectors/connect", async (request, reply) => {
+    const operator = operatorContext(request);
+    if (!requireCapability(reply, operator, "setup:write", "connect agent connector")) {
+        return denyCapability(operator, "setup:write");
+    }
+    try {
+        const registration = createConnectorRegistration(request.body ?? {}, operator);
+        connectorRegistry.set(registration.connectorId, registration);
+        await persistState("connectors.connect");
+        core.addOperationalAudit("connector.connect", operator.actorId, registration.connectorId, {
+            kind: registration.kind,
+            mode: registration.mode,
+            lane: registration.lane
+        });
+        return {
+            connector: redactConnectorRegistration(registration),
+            connectors: serializeConnectorRegistry(),
+            operator
+        };
+    }
+    catch (error) {
+        reply.code(400);
+        return { message: error instanceof Error ? error.message : "Unable to connect connector." };
+    }
+});
+app.post("/agent-network/connectors/:connectorId/validate", async (request, reply) => {
+    const operator = operatorContext(request);
+    if (!requireCapability(reply, operator, "setup:write", "validate agent connector")) {
+        return denyCapability(operator, "setup:write");
+    }
+    const connectorId = text(request.params?.connectorId);
+    const registration = connectorId ? connectorRegistry.get(connectorId) : undefined;
+    if (!registration) {
+        reply.code(404);
+        return { message: "Connector registration not found." };
+    }
+    try {
+        const result = await validateConnectorRegistration(registration, operator);
+        await persistState("connectors.validate");
+        broadcastAgentSse({
+            type: "connector_validated",
+            generatedAt: new Date().toISOString(),
+            connector: result.connector,
+            syncedEvents: result.syncedEvents,
+            snapshot: buildAgentNetworkSnapshot()
+        });
+        return {
+            ...result,
+            connectors: serializeConnectorRegistry(),
+            snapshot: buildAgentNetworkSnapshot(),
+            operator
+        };
+    }
+    catch (error) {
+        const now = new Date().toISOString();
+        const updated = {
+            ...registration,
+            status: "offline",
+            message: connectorRecoveryMessage(error),
+            updatedAt: now,
+            lastValidatedAt: now
+        };
+        connectorRegistry.set(updated.connectorId, updated);
+        await persistState("connectors.validate.failed");
+        reply.code(400);
+        return {
+            message: updated.message,
+            connector: redactConnectorRegistration(updated),
+            connectors: serializeConnectorRegistry(),
+            operator
+        };
+    }
+});
 app.get("/plugins", async () => pluginList());
 app.post("/plugins/:pluginId/toggle", async (request, reply) => {
     const operator = operatorContext(request);
@@ -546,6 +673,14 @@ app.get("/dashboard/snapshot", async (request) => {
         tokenSeries,
         workloadSeries,
         plugins: pluginRows,
+        connectorStrategy: {
+            connectors: serializeConnectorRegistry(),
+            commands: buildConnectorCommands({
+                repoRoot: process.cwd(),
+                localCoreBaseUrl,
+                openClawPath: defaultOpenClawInstallPath
+            })
+        },
         connectors: pluginRows.map((plugin) => ({
             connectorId: plugin.pluginId,
             scope: plugin.capabilities.join(", "),
@@ -1193,6 +1328,61 @@ app.post("/agent-network/telemetry/events", async (request, reply) => {
         rejected: rejected.length,
         deduped: deduped.length,
         issues: rejected.slice(0, 20)
+    };
+});
+app.get("/agent-network/commands", async (request, reply) => {
+    const agentId = text(request.query?.agentId) ?? text(request.headers?.["x-theia-agent-id"]);
+    const auth = authenticateAgentCommandAccess(request, agentId);
+    if (!auth.ok) {
+        reply.code(auth.statusCode ?? 401);
+        return { message: auth.message };
+    }
+    const commands = agentControlCommands
+        .filter((command) => command.agentIds.includes(agentId))
+        .filter((command) => !["completed", "failed", "cancelled", "rejected"].includes(command.status))
+        .slice(0, 50);
+    return {
+        generatedAt: new Date().toISOString(),
+        agentId,
+        commands
+    };
+});
+app.post("/agent-network/commands/:commandId/ack", async (request, reply) => {
+    const commandId = text(request.params?.commandId);
+    const commandIndex = commandId ? agentControlCommands.findIndex((command) => command.commandId === commandId) : -1;
+    if (commandIndex < 0) {
+        reply.code(404);
+        return { message: "Command not found." };
+    }
+    const command = agentControlCommands[commandIndex];
+    const agentId = text(request.body?.agentId) ?? text(request.headers?.["x-theia-agent-id"]) ?? command.agentIds[0];
+    const auth = authenticateAgentCommandAccess(request, agentId);
+    if (!auth.ok) {
+        reply.code(auth.statusCode ?? 401);
+        return { message: auth.message };
+    }
+    if (!command.agentIds.includes(agentId)) {
+        reply.code(403);
+        return { message: "Command is not addressed to this agent." };
+    }
+    const status = normalizeAgentCommandAckStatus(request.body?.status) ?? "accepted";
+    const updated = agentControlCommandSchema.parse({
+        ...command,
+        status,
+        resultSummary: text(request.body?.resultSummary) ?? command.resultSummary,
+        updatedAt: new Date().toISOString()
+    });
+    agentControlCommands[commandIndex] = updated;
+    await persistState("agent-network.command.ack");
+    broadcastAgentSse({
+        type: "agent_command_ack",
+        generatedAt: updated.updatedAt,
+        command: updated,
+        snapshot: buildAgentNetworkSnapshot()
+    });
+    return {
+        acknowledged: true,
+        command: updated
     };
 });
 app.get("/agent-network/stream", async (request, reply) => {
@@ -2350,6 +2540,290 @@ function registerAgentProfile(input, operator) {
         telemetryToken
     };
 }
+function serializeConnectorRegistry() {
+    return [...connectorRegistry.values()]
+        .map((record) => redactConnectorRegistration(record))
+        .sort((a, b) => String(a.displayName).localeCompare(String(b.displayName)));
+}
+function createConnectorRegistration(input, operator) {
+    const now = new Date().toISOString();
+    const kind = normalizeAgentConnectionKind(input.kind ?? input.connectionKind ?? input.type);
+    const mode = normalizeConnectorMode(input.mode);
+    const lane = normalizeConnectorLane(input.lane, kind);
+    const connectorId = text(input.connectorId) ?? `${kind}-${mode}`;
+    const defaultEndpoint = defaultConnectorEndpoint(kind, mode);
+    const requestedEndpoint = text(input.endpoint) ?? defaultEndpoint;
+    let endpoint;
+    let endpointLabel = text(input.endpointLabel);
+    if (requestedEndpoint) {
+        const validated = validateConnectorEndpoint({
+            endpoint: requestedEndpoint,
+            mode,
+            allowedEndpoints: connectorAllowedEndpoints
+        });
+        if (!validated.ok) {
+            throw new Error(validated.message);
+        }
+        endpoint = validated.endpoint;
+        endpointLabel = endpointLabel ?? validated.endpointLabel;
+    }
+    const authKind = normalizeConnectorAuthKind(input.authKind, kind, mode);
+    const hasSecret = kind === "octopoda" && mode === "cloud"
+        ? Boolean(octopodaCloudApiKey)
+        : Boolean(input.hasSecret);
+    const commands = buildConnectorCommands({
+        repoRoot: process.cwd(),
+        localCoreBaseUrl,
+        openClawPath: defaultOpenClawInstallPath,
+        agentId: text(input.agentId)
+    })[kind];
+    return {
+        connectorId,
+        kind,
+        displayName: text(input.displayName) ?? defaultConnectorDisplayName(kind, mode),
+        lane,
+        mode,
+        endpoint,
+        endpointLabel,
+        authKind,
+        hasSecret,
+        capabilities: connectorCapabilities(kind),
+        status: "degraded",
+        message: connectorConnectedMessage(kind, mode, hasSecret),
+        createdAt: connectorRegistry.get(connectorId)?.createdAt ?? now,
+        updatedAt: now,
+        lastValidatedAt: connectorRegistry.get(connectorId)?.lastValidatedAt,
+        commands
+    };
+}
+async function validateConnectorRegistration(registration, operator) {
+    if (registration.kind === "octopoda") {
+        return validateAndSyncOctopodaConnector(registration, operator);
+    }
+    const now = new Date().toISOString();
+    const updated = {
+        ...registration,
+        status: registration.kind === "mcp" || registration.kind === "openclaw" ? "degraded" : "healthy",
+        message: registration.kind === "mcp" || registration.kind === "openclaw"
+            ? "Connector is configured. Register a private agent token, then send a heartbeat to move it live."
+            : "Connector configuration validated.",
+        updatedAt: now,
+        lastValidatedAt: now
+    };
+    connectorRegistry.set(updated.connectorId, updated);
+    core.addOperationalAudit("connector.validate", operator.actorId, updated.connectorId, {
+        kind: updated.kind,
+        mode: updated.mode,
+        status: updated.status
+    });
+    return {
+        connector: redactConnectorRegistration(updated),
+        syncedEvents: 0
+    };
+}
+async function validateAndSyncOctopodaConnector(registration, operator) {
+    const endpoint = registration.endpoint ?? defaultConnectorEndpoint("octopoda", registration.mode) ?? DEFAULT_OCTOPODA_LOCAL_URL;
+    const connector = new OctopodaConnector({
+        connectorId: registration.connectorId,
+        baseUrl: endpoint,
+        mode: registration.mode,
+        apiKey: registration.mode === "cloud" ? octopodaCloudApiKey : undefined,
+        timeoutMs: 5000
+    });
+    await connector.init({
+        scope: {
+            workspaceId,
+            approvedPaths: [...approvedPaths]
+        },
+        context: {
+            workspaceId,
+            now: () => new Date(),
+            emitEvent: (event) => core.addEvent(event),
+            emitAudit: (message, metadata) => core.addOperationalAudit(message, operator.actorId, registration.connectorId, metadata ?? {})
+        }
+    });
+    const health = await connector.health();
+    const rows = health.ok ? await fetchOctopodaAgentRows(registration) : [];
+    const now = new Date();
+    const accepted = [];
+    rows.forEach((row, index) => {
+        const parsedEvent = agentActivityEventSchema.safeParse(mapOctopodaAgentToActivityEvent({
+            row,
+            workspaceId,
+            connectorId: registration.connectorId,
+            endpointLabel: registration.endpointLabel,
+            now,
+            sequence: index + 1
+        }));
+        if (!parsedEvent.success) {
+            return;
+        }
+        const event = sanitizeAgentActivityEvent(parsedEvent.data);
+        accepted.push(event);
+        ingestAgentActivityEvent(event);
+    });
+    if (accepted.length > 0) {
+        const mapped = accepted.map((event) => agentActivityToWorkflowEvent(event));
+        for (const workflowEvent of mapped) {
+            core.addEvent(workflowEvent);
+        }
+        highRiskEngine.ingestEvents(mapped);
+    }
+    const updatedAt = new Date().toISOString();
+    const updated = {
+        ...registration,
+        status: health.ok ? "healthy" : connectorStatusFromHealth(health),
+        message: health.ok
+            ? `Octopoda validated. Synced ${accepted.length} agent activity event(s).`
+            : connectorRecoveryMessage(health.message),
+        updatedAt,
+        lastValidatedAt: updatedAt
+    };
+    connectorRegistry.set(updated.connectorId, updated);
+    core.addOperationalAudit("connector.validate", operator.actorId, updated.connectorId, {
+        kind: updated.kind,
+        mode: updated.mode,
+        status: updated.status,
+        syncedEvents: accepted.length
+    });
+    return {
+        connector: redactConnectorRegistration(updated),
+        syncedEvents: accepted.length,
+        agents: accepted.map((event) => summarizeAgentEvent(event))
+    };
+}
+async function fetchOctopodaAgentRows(registration) {
+    const endpoint = registration.endpoint ?? defaultConnectorEndpoint("octopoda", registration.mode) ?? DEFAULT_OCTOPODA_LOCAL_URL;
+    const payload = await fetchConnectorJson(`${endpoint}/api/agents`, registration);
+    if (Array.isArray(payload)) {
+        return payload;
+    }
+    if (Array.isArray(payload?.agents)) {
+        return payload.agents;
+    }
+    if (Array.isArray(payload?.data)) {
+        return payload.data;
+    }
+    return [];
+}
+async function fetchConnectorJson(url, registration) {
+    const headers = { Accept: "application/json" };
+    if (registration.kind === "octopoda" && registration.mode === "cloud" && octopodaCloudApiKey) {
+        headers.Authorization = `Bearer ${octopodaCloudApiKey}`;
+    }
+    const response = await fetch(url, {
+        method: "GET",
+        headers,
+        signal: AbortSignal.timeout(5000)
+    });
+    if (response.status === 401 || response.status === 403) {
+        throw new Error("unauthorized");
+    }
+    if (!response.ok) {
+        throw new Error(`Connector returned HTTP ${response.status}.`);
+    }
+    return response.json();
+}
+async function probeJson(url) {
+    try {
+        const response = await fetch(url, {
+            method: "GET",
+            headers: { Accept: "application/json" },
+            signal: AbortSignal.timeout(2500)
+        });
+        return { ok: response.ok, status: response.status };
+    }
+    catch (error) {
+        return { ok: false, status: 0, message: connectorRecoveryMessage(error) };
+    }
+}
+function defaultConnectorEndpoint(kind, mode) {
+    if (kind === "octopoda") {
+        return mode === "cloud" ? octopodaCloudBaseUrl : octopodaLocalBaseUrl;
+    }
+    return undefined;
+}
+function defaultConnectorDisplayName(kind, mode) {
+    if (kind === "octopoda") {
+        return mode === "cloud" ? "Octopoda Cloud API" : "Octopoda Local Runtime";
+    }
+    if (kind === "mcp") {
+        return "Theia MCP Reporter";
+    }
+    if (kind === "openclaw") {
+        return "OpenClaw Skill Reporter";
+    }
+    return `${kind.charAt(0).toUpperCase()}${kind.slice(1)} Connector`;
+}
+function connectorConnectedMessage(kind, mode, hasSecret) {
+    if (kind === "octopoda" && mode === "cloud" && !hasSecret) {
+        return "Cloud connector saved, but THEIA_OCTOPODA_API_KEY is not configured. Add it in the environment before validation.";
+    }
+    if (kind === "octopoda") {
+        return "Octopoda connector saved. Validate to pull the registry and live metrics.";
+    }
+    if (kind === "mcp") {
+        return "MCP connector saved. Register an agent token and paste the generated JSON into your MCP client.";
+    }
+    if (kind === "openclaw") {
+        return "OpenClaw skill connector saved. Install the skill and send a heartbeat to make it live.";
+    }
+    return "Connector saved. Validate when the service is reachable.";
+}
+function connectorRecoveryMessage(error) {
+    const message = typeof error === "string" ? error : error?.message ?? "";
+    const lowered = message.toLowerCase();
+    if (lowered.includes("unauthorized") || lowered.includes("401") || lowered.includes("403")) {
+        return "Connector auth failed. For cloud mode, set THEIA_OCTOPODA_API_KEY and restart Theia; for paired agents, rotate the token and update the adapter.";
+    }
+    if (lowered.includes("fetch failed") || lowered.includes("econnrefused") || lowered.includes("timeout") || lowered.includes("aborted")) {
+        return "Connector service is offline or unreachable. Start the local service, then validate again from the dashboard.";
+    }
+    if (lowered.includes("schema") || lowered.includes("invalid")) {
+        return "Connector response did not match the expected schema. Update the adapter or check the endpoint version.";
+    }
+    if (lowered.includes("cors")) {
+        return "Connector request was blocked by CORS/auth policy. Use the local core endpoint or allowlist the connector origin.";
+    }
+    return message ? `Connector validation failed: ${redactSensitive(message)}` : "Connector validation failed. Check service status and credentials.";
+}
+function connectorStatusFromHealth(health) {
+    if (health?.ok) {
+        return "healthy";
+    }
+    const message = String(health?.message ?? health?.status ?? "").toLowerCase();
+    if (message.includes("unauthorized") || message.includes("degraded")) {
+        return "degraded";
+    }
+    return "offline";
+}
+function normalizeConnectorMode(value) {
+    return text(value)?.toLowerCase() === "cloud" ? "cloud" : "local";
+}
+function normalizeConnectorLane(value, kind) {
+    const normalized = text(value)?.toLowerCase();
+    if (["pull", "push", "mcp"].includes(normalized)) {
+        return normalized;
+    }
+    if (kind === "mcp")
+        return "mcp";
+    if (kind === "openclaw" || kind === "api" || kind === "oauth" || kind === "terminal" || kind === "custom")
+        return "push";
+    return "pull";
+}
+function normalizeConnectorAuthKind(value, kind, mode) {
+    const normalized = text(value)?.toLowerCase();
+    if (["none", "api_key", "pairing_token", "oauth", "local_session"].includes(normalized)) {
+        return normalized;
+    }
+    if (kind === "octopoda" && mode === "cloud")
+        return "api_key";
+    if (kind === "octopoda")
+        return "none";
+    if (kind === "oauth")
+        return "oauth";
+    return "pairing_token";
+}
 function buildAgentTelemetryCommands(profile, token) {
     const endpoint = `${localCoreBaseUrl}/agent-network/telemetry/events`;
     if (!token) {
@@ -2456,11 +2930,39 @@ function authenticateAgentTelemetry(request, event) {
     }
     return { ok: true };
 }
+function authenticateAgentCommandAccess(request, agentId) {
+    if (!agentId) {
+        return { ok: false, statusCode: 400, message: "agentId is required." };
+    }
+    const profile = agentRegistry.get(agentId);
+    if (!profile) {
+        return { ok: false, statusCode: 404, message: "Agent is not registered. Add it in the dashboard first." };
+    }
+    if (profile.status === "emergency-stopped") {
+        return { ok: false, statusCode: 423, message: "Agent is emergency-stopped and cannot receive commands until an operator re-enables it." };
+    }
+    const secret = agentSecrets.get(agentId);
+    if (!secret || secret.revokedAt) {
+        return { ok: false, statusCode: 401, message: "Agent command token is missing or revoked." };
+    }
+    const token = readAgentTelemetryToken(request);
+    if (!token || sha256(token) !== secret.tokenHash) {
+        return { ok: false, statusCode: 401, message: "Agent command authentication failed." };
+    }
+    return { ok: true };
+}
 function readAgentTelemetryToken(request) {
     return bearerToken(request.headers?.authorization) ??
         text(request.headers?.["x-theia-agent-token"]) ??
         text(request.body?.token) ??
         text(request.body?.agentToken);
+}
+function normalizeAgentCommandAckStatus(value) {
+    const normalized = text(value)?.toLowerCase();
+    if (["accepted", "rejected", "running", "completed", "failed", "cancelled"].includes(normalized)) {
+        return normalized;
+    }
+    return undefined;
 }
 function ingestAgentActivityEvent(event) {
     const now = new Date().toISOString();
@@ -2474,11 +2976,11 @@ function ingestAgentActivityEvent(event) {
         vendor: event.agent.vendor ?? current?.vendor,
         connectionKind: event.agent.connectionKind,
         status: event.classification.status,
-        endpointLabel: current?.endpointLabel,
-        tools: current?.tools ?? [],
+        endpointLabel: current?.endpointLabel ?? event.where.targets[0]?.label,
+        tools: current?.tools?.length ? current.tools : uniq((event.how.toolCalls ?? []).map((call) => call.name).filter(Boolean)).slice(0, 12),
         skills: current?.skills ?? [],
-        connectors: current?.connectors ?? [],
-        memorySummary: current?.memorySummary,
+        connectors: current?.connectors?.length ? current.connectors : uniq([event.agent.connectionKind, event.integrity?.keyId].filter(Boolean)).slice(0, 8),
+        memorySummary: current?.memorySummary ?? (event.classification.category === "memory_update" ? event.what.safeSummary : undefined),
         soulSummary: current?.soulSummary,
         controlLevel: current?.controlLevel ?? "observe_only",
         canCollaborate: current?.canCollaborate ?? false,
@@ -2562,7 +3064,7 @@ function agentActivityToWorkflowEvent(event) {
             vendor: event.usage.vendor ?? event.agent.vendor
         },
         source: {
-            connectorId: "agent-network",
+            connectorId: event.integrity?.keyId ?? "agent-network",
             objectPath: event.privacy.rawLogRef ?? event.where.targets[0]?.ref ?? event.agent.connectionKind
         },
         confidence: clamp(event.classification.confidence ?? 0.75),
@@ -3361,7 +3863,7 @@ function stringList(value) {
 }
 function normalizeAgentConnectionKind(value) {
     const normalized = text(value)?.toLowerCase().replace(/[-\s]+/g, "_");
-    if (["local", "api", "oauth", "openclaw", "terminal", "custom"].includes(normalized)) {
+    if (["local", "api", "oauth", "openclaw", "octopoda", "mcp", "terminal", "custom"].includes(normalized)) {
         return normalized;
     }
     if (normalized === "oauth_based")
@@ -3783,6 +4285,35 @@ async function hydrateFromStateFile() {
                 }
             }
         }
+        if (parsed.connectorRegistry && Array.isArray(parsed.connectorRegistry.registrations)) {
+            connectorRegistry.clear();
+            for (const rawRecord of parsed.connectorRegistry.registrations) {
+                const connectorId = text(rawRecord?.connectorId);
+                if (!connectorId) {
+                    continue;
+                }
+                const kind = normalizeAgentConnectionKind(rawRecord?.kind);
+                const mode = normalizeConnectorMode(rawRecord?.mode);
+                connectorRegistry.set(connectorId, {
+                    connectorId,
+                    kind,
+                    displayName: text(rawRecord?.displayName) ?? defaultConnectorDisplayName(kind, mode),
+                    lane: normalizeConnectorLane(rawRecord?.lane, kind),
+                    mode,
+                    endpoint: text(rawRecord?.endpoint),
+                    endpointLabel: text(rawRecord?.endpointLabel),
+                    authKind: normalizeConnectorAuthKind(rawRecord?.authKind, kind, mode),
+                    hasSecret: toBool(rawRecord?.hasSecret) ?? false,
+                    capabilities: Array.isArray(rawRecord?.capabilities) ? rawRecord.capabilities.map(String).slice(0, 40) : connectorCapabilities(kind),
+                    status: ["healthy", "degraded", "offline"].includes(text(rawRecord?.status)) ? text(rawRecord?.status) : "degraded",
+                    message: text(rawRecord?.message),
+                    createdAt: text(rawRecord?.createdAt) ?? new Date().toISOString(),
+                    updatedAt: text(rawRecord?.updatedAt) ?? new Date().toISOString(),
+                    lastValidatedAt: text(rawRecord?.lastValidatedAt),
+                    commands: rawRecord?.commands
+                });
+            }
+        }
         setup.runtime = runtimeView();
     }
     catch {
@@ -3831,6 +4362,9 @@ function statePayload(reason) {
         alertOverrides: Object.fromEntries(alertOverrides.entries()),
         highRiskNotifications: highRiskEngine.exportState(),
         openClawTelemetry: openClawTelemetry.exportState(),
+        connectorRegistry: {
+            registrations: [...connectorRegistry.values()]
+        },
         agentNetwork: {
             agents: serializeAgentRegistry(),
             agentSecrets: [...agentSecrets.entries()].map(([agentId, secret]) => ({
