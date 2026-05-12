@@ -6,28 +6,46 @@ export function AuditView({ data }: { data: DashboardData }) {
       <div className="panel-grid">
         <article className="panel">
           <h3>Audit Log</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Timestamp</th>
-                <th>Actor</th>
-                <th>Action</th>
-                <th>Target</th>
-                <th>Result</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.audit.map((item, index) => (
-                <tr key={`${item.ts}-${index}`}>
-                  <td>{new Date(item.ts).toLocaleString()}</td>
-                  <td>{item.actor}</td>
-                  <td>{item.action}</td>
-                  <td>{item.target}</td>
-                  <td>{item.result}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="desktop-only">
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Actor</th>
+                    <th>Action</th>
+                    <th>Target</th>
+                    <th>Result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.audit.map((item, index) => (
+                    <tr key={`${item.ts}-${index}`}>
+                      <td>{new Date(item.ts).toLocaleString()}</td>
+                      <td>{item.actor}</td>
+                      <td>{item.action}</td>
+                      <td>{item.target}</td>
+                      <td>{item.result}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="mobile-only card-stack">
+            {data.audit.map((item, index) => (
+              <article className="compact-card" key={`audit-${index}-${item.ts}`}>
+                <p>
+                  <strong>{item.action}</strong>
+                </p>
+                <small>
+                  {new Date(item.ts).toLocaleString()} | {item.actor}
+                </small>
+                <p>{item.target}</p>
+                <small>{item.result}</small>
+              </article>
+            ))}
+          </div>
         </article>
         <article className="panel">
           <h3>Permission Controls</h3>
@@ -38,7 +56,7 @@ export function AuditView({ data }: { data: DashboardData }) {
             <li>Prompt metadata access: {data.connection.permissions.readPrompts ? "yes" : "no"}</li>
             <li>Operator role: {data.operator.role}</li>
             <li>Operator capabilities: {data.operator.capabilities.length > 0 ? data.operator.capabilities.join(", ") : "read-only"}</li>
-            <li>Immutable audit chain remains active for all connector and governance actions.</li>
+            <li>Immutable audit chain remains active for all connector, notification, and governance actions.</li>
           </ul>
         </article>
       </div>

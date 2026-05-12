@@ -8,38 +8,17 @@ import {
   logoutLocalAccount,
   signinLocalAccount,
   signupLocalAccount,
-  subscribeOpenClawTelemetryStream
+  subscribeOpenClawTelemetryStream,
+  triggerEmergencyStop
 } from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { emptyDashboardData } from "./mock-data";
-import type { DashboardData, ViewKey } from "./types";
+import type { DashboardData, HighRiskNotificationRecord, ViewKey } from "./types";
 import { AgentsView } from "./views/AgentsView";
-import { AlertsView } from "./views/AlertsView";
-import { AuditView } from "./views/AuditView";
-import { CompareView } from "./views/CompareView";
-import { MemoryView } from "./views/MemoryView";
-import { OpenClawView } from "./views/OpenClawView";
-import { OnboardingView } from "./views/OnboardingView";
-import { OverviewView } from "./views/OverviewView";
-import { SettingsView } from "./views/SettingsView";
-import { TimelineView } from "./views/TimelineView";
-import { WorkflowGovernanceView } from "./views/WorkflowGovernanceView";
 import { AuthView } from "./views/AuthView";
 
-const VIEW_LABELS: Record<ViewKey, string> = {
-  onboarding: "OpenClaw Setup",
-  openclaw: "OpenClaw Operations",
-  overview: "Overview Dashboard",
-  agents: "Agent List and Health",
-  timeline: "Workflow Timeline",
-  memory: "Memory Explorer",
-  alerts: "Reasoning Alert Center",
-  governance: "Workflow Governance",
-  compare: "Agent Comparison",
-  audit: "Audit and Permissions",
-  settings: "Settings and Connectors"
-};
+const LIVE_BANNER_WINDOW_MS = 10 * 60 * 1000;
 
 function mergeOpenClawLive(
   current: DashboardData["openClawLive"],
@@ -70,8 +49,27 @@ function mergeOpenClawLive(
   };
 }
 
+function isFileIngestionReplay(record: HighRiskNotificationRecord): boolean {
+  return record.runId === "run:file-ingestion" || record.sourceEventId.startsWith("local-file-main:");
+}
+
+function isLiveHighRiskBanner(record: HighRiskNotificationRecord | undefined, nowMs = Date.now()): record is HighRiskNotificationRecord {
+  if (!record) return false;
+  const detectedAt = new Date(record.detectedAt).getTime();
+  if (!Number.isFinite(detectedAt)) return false;
+  return (
+    record.status === "open" &&
+    record.dedupeStatus === "dispatched" &&
+    (record.severity === "high" || record.severity === "critical") &&
+    record.channels.some((channel) => channel.channel === "in_app_banner" && channel.status === "sent") &&
+    nowMs - detectedAt >= 0 &&
+    nowMs - detectedAt <= LIVE_BANNER_WINDOW_MS &&
+    !isFileIngestionReplay(record)
+  );
+}
+
 export function App() {
-  const [view, setView] = useState<ViewKey>("overview");
+  const [view, setView] = useState<ViewKey>("dashboard");
   const [data, setData] = useState<DashboardData>(emptyDashboardData);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [authReady, setAuthReady] = useState(false);
@@ -138,12 +136,10 @@ export function App() {
 
   useEffect(() => {
     if (!authenticated) return;
-    if (!data.connection.connected) {
-      setView("onboarding");
-    } else if (view === "onboarding") {
-      setView("overview");
+    if (!["dashboard", "network", "stats", "cards", "activity", "costs", "security", "settings", "help"].includes(view)) {
+      setView("dashboard");
     }
-  }, [authenticated, data.connection.connected, view]);
+  }, [authenticated, view]);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -234,7 +230,7 @@ export function App() {
       const session = await signinLocalAccount(email, password);
       setAuthenticated(true);
       setAuthEmail(session.user.email);
-      setView("overview");
+      setView("dashboard");
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Unable to sign in.");
     } finally {
@@ -249,7 +245,7 @@ export function App() {
       const session = await signupLocalAccount(email, password);
       setAuthenticated(true);
       setAuthEmail(session.user.email);
-      setView("overview");
+      setView("dashboard");
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Unable to create account.");
     } finally {
@@ -264,42 +260,50 @@ export function App() {
     setData(emptyDashboardData);
   }, []);
 
+  const handleGlobalEmergencyStop = useCallback(async () => {
+    const confirmed = window.confirm(
+      "Stop all controllable OpenClaw/local agent activity now? This action is logged and agents will not auto-reconnect without approval."
+    );
+    if (!confirmed) return;
+    try {
+      await triggerEmergencyStop("Operator triggered global emergency stop from dashboard header.");
+      await refreshData();
+      setView("security");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Unable to trigger emergency stop.");
+    }
+  }, [refreshData]);
+
+  const liveBanner = useMemo(() => isLiveHighRiskBanner(data.notificationCenter.banner) ? data.notificationCenter.banner : undefined, [data.notificationCenter.banner]);
+  const liveNotificationCount = useMemo(
+    () => data.notificationCenter.history.filter((record) => isLiveHighRiskBanner(record)).length,
+    [data.notificationCenter.history]
+  );
+
   const body = useMemo(() => {
     switch (view) {
-      case "onboarding":
-        return <OnboardingView data={data} onRefresh={refreshData} />;
-      case "overview":
-        return <OverviewView data={data} onOpenClawOps={() => setView("openclaw")} />;
-      case "openclaw":
-        return (
-          <OpenClawView
-            data={data}
-            onOpenSetup={() => setView("onboarding")}
-            onRefresh={refreshData}
-            streamStatus={openClawStreamStatus}
-            streamMessage={openClawStreamMessage}
-          />
-        );
-      case "agents":
-        return <AgentsView data={data} />;
-      case "timeline":
-        return <TimelineView data={data} />;
-      case "memory":
-        return <MemoryView data={data} />;
-      case "alerts":
-        return <AlertsView data={data} onRefresh={refreshData} isRefreshing={isRefreshing} />;
-      case "governance":
-        return <WorkflowGovernanceView data={data} onRefresh={refreshData} isRefreshing={isRefreshing} />;
-      case "compare":
-        return <CompareView data={data} />;
-      case "audit":
-        return <AuditView data={data} />;
+      case "dashboard":
+        return <AgentsView data={data} mode="dashboard" />;
+      case "network":
+        return <AgentsView data={data} mode="network" />;
+      case "stats":
+        return <AgentsView data={data} mode="stats" />;
+      case "cards":
+        return <AgentsView data={data} mode="cards" />;
+      case "activity":
+        return <AgentsView data={data} mode="activity" />;
+      case "costs":
+        return <AgentsView data={data} mode="costs" />;
+      case "security":
+        return <AgentsView data={data} mode="security" />;
       case "settings":
-        return <SettingsView data={data} onRefresh={refreshData} isRefreshing={isRefreshing} />;
+        return <AgentsView data={data} mode="settings" />;
+      case "help":
+        return <AgentsView data={data} mode="help" />;
       default:
-        return <OverviewView data={data} onOpenClawOps={() => setView("openclaw")} />;
+        return <AgentsView data={data} mode="dashboard" />;
     }
-  }, [data, isRefreshing, openClawStreamMessage, openClawStreamStatus, refreshData, view]);
+  }, [data, view]);
 
   if (!authReady) {
     return (
@@ -326,29 +330,25 @@ export function App() {
           connected={data.connection.connected}
           generatedAt={data.generatedAt}
           signedInEmail={authEmail}
+          notificationCount={liveNotificationCount}
+          onAddAgent={() => setView("network")}
+          onEmergencyStop={() => {
+            void handleGlobalEmergencyStop();
+          }}
           onSignOut={() => {
             void handleLogout();
           }}
         />
-        <section className="view-header">
-          <h2>{VIEW_LABELS[view]}</h2>
-          <p>
-            {data.connection.connected
-              ? "Transparent local-first control surface for memory, workflow quality, and operator governance."
-              : "Complete setup first to enable real memory, token, workload, and reasoning observability."}
-          </p>
-        </section>
-        {data.notificationCenter.banner ? (
+        {liveBanner ? (
           <section className="critical-banner" role="status" aria-live="polite">
             <div>
-              <strong>High-Risk Action: {data.notificationCenter.banner.title}</strong>
+              <strong>Live High-Risk Activity: {liveBanner.title}</strong>
               <p>
-                {data.notificationCenter.banner.agentId} | {data.notificationCenter.banner.runId} |{" "}
-                {new Date(data.notificationCenter.banner.detectedAt).toLocaleString()}
+                {liveBanner.agentId} | {liveBanner.runId} | {new Date(liveBanner.detectedAt).toLocaleString()}
               </p>
             </div>
-            <button className="action-btn danger" type="button" onClick={() => setView("alerts")}>
-              Open Alert Center
+            <button className="action-btn danger" type="button" onClick={() => setView("dashboard")}>
+              Open Agent
             </button>
           </section>
         ) : null}

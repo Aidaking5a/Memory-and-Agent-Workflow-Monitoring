@@ -4,8 +4,10 @@ param(
   [switch]$SkipCore,
   [switch]$SkipControlPlane,
   [switch]$SkipDesktop,
+  [switch]$SkipWebsite,
   [switch]$NoBrowser,
-  [switch]$ForceDesktopPort
+  [switch]$ForceDesktopPort,
+  [string]$OpenClawPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,6 +47,28 @@ function Wait-LocalPort {
       return $true
     }
     Start-Sleep -Milliseconds 500
+  }
+  return $false
+}
+
+function Wait-HttpReady {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Url,
+    [int]$TimeoutSeconds = 70
+  )
+
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    try {
+      $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -TimeoutSec 6 -ErrorAction Stop
+      if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) {
+        return $true
+      }
+    } catch {
+      # continue waiting
+    }
+    Start-Sleep -Milliseconds 800
   }
   return $false
 }
@@ -97,7 +121,11 @@ $pnpmCommand = Get-PnpmCommand
 
 Write-Host "Project root: $projectRoot"
 Write-Host "Applying local Theia environment defaults..."
-& "$PSScriptRoot\configure-theia-local-env.ps1"
+if ([string]::IsNullOrWhiteSpace($OpenClawPath)) {
+  & "$PSScriptRoot\configure-theia-local-env.ps1"
+} else {
+  & "$PSScriptRoot\configure-theia-local-env.ps1" -OpenClawPath $OpenClawPath
+}
 
 if (-not $SkipKeycloak) {
   if (-not (Get-Command "docker" -ErrorAction SilentlyContinue)) {
@@ -106,6 +134,18 @@ if (-not $SkipKeycloak) {
 
   Write-Host "Ensuring local Keycloak is running..."
   & "$PSScriptRoot\ensure-keycloak.ps1"
+
+  $metadataUrl = [Environment]::GetEnvironmentVariable("THEIA_SAML_METADATA_URL")
+  if ([string]::IsNullOrWhiteSpace($metadataUrl)) {
+    $metadataUrl = "http://localhost:8080/realms/theia/protocol/saml/descriptor"
+  }
+
+  if (Wait-HttpReady -Url $metadataUrl -TimeoutSeconds 75) {
+    Write-Host "Keycloak metadata endpoint is reachable: $metadataUrl"
+  } else {
+    Write-Warning "Keycloak metadata endpoint did not become reachable in time: $metadataUrl"
+    Write-Warning "Control-plane may start with SAML temporarily disabled until restart."
+  }
 }
 
 if (-not $SkipCore) {
@@ -147,6 +187,15 @@ if (-not $SkipDesktop) {
   }
 }
 
+if (-not $SkipWebsite) {
+  if (Wait-LocalPort -Port 4173 -TimeoutSeconds 1) {
+    Write-Host "Theia website already running on port 4173."
+  } else {
+    Write-Host "Starting Theia website server..."
+    Start-DevWindow -ProjectRoot $projectRoot -CommandLine "$pnpmCommand run dev:website"
+  }
+}
+
 if (-not $NoBrowser) {
   if (-not $SkipDesktop) {
     if (Wait-LocalPort -Port 5173 -TimeoutSeconds 25) {
@@ -167,9 +216,17 @@ if (-not $NoBrowser) {
       Write-Warning "Control plane was not detected on port 4620. Check the control-plane window for startup errors."
     }
   }
+  if (-not $SkipWebsite) {
+    if (Wait-LocalPort -Port 4173 -TimeoutSeconds 25) {
+      Start-Process "http://localhost:4173" | Out-Null
+    } else {
+      Write-Warning "Website server was not detected on port 4173. Check the website window for startup errors."
+    }
+  }
 }
 
 Write-Host "Theia local dev stack launch complete."
 Write-Host "Core API: http://localhost:4318"
 Write-Host "Control Plane: http://localhost:4620/dashboard"
 Write-Host "Desktop: http://localhost:5173"
+Write-Host "Website: http://localhost:4173"

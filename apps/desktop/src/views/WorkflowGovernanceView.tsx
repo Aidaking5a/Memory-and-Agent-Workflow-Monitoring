@@ -355,88 +355,90 @@ export function WorkflowGovernanceView({ data, onRefresh, isRefreshing }: Workfl
         </div>
         {!canRetire ? <p className="muted-note">Current role cannot retire stale workflows.</p> : null}
         {feedback ? <p className={feedback.level === "error" ? "feedback error" : "feedback success"}>{feedback.message}</p> : null}
-        <table>
-          <thead>
-            <tr>
-              <th>Workflow</th>
-              <th>Status</th>
-              <th>Impact</th>
-              <th>Namespace</th>
-              <th>Confidence</th>
-              <th>Utility</th>
-              <th>Overlap</th>
-              <th>Contradiction</th>
-              <th>Stale Use</th>
-              <th>Conflicts</th>
-              <th>Updated</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.workflowCandidates.map((candidate) => (
-              <tr key={candidate.workflowId}>
-                <td>{candidate.title}</td>
-                <td>
-                  <span className={`status-pill ${candidate.status}`}>{candidate.status.replace("_", " ")}</span>
-                </td>
-                <td>
-                  <SeverityBadge severity={candidate.impactLevel} />
-                </td>
-                <td>{candidate.namespace}</td>
-                <td>{percentage(candidate.confidenceScore)}</td>
-                <td>{percentage(candidate.utilityRate)}</td>
-                <td>{percentage(candidate.overlapRate)}</td>
-                <td>{percentage(candidate.contradictionRate)}</td>
-                <td>{percentage(candidate.staleUseRate)}</td>
-                <td>{candidate.conflictCount}</td>
-                <td>{new Date(candidate.updatedAt).toLocaleString()}</td>
-                <td>
-                  <div className="action-group">
-                    {candidate.status === "pending_review" ? (
-                      <>
-                        <button
-                          className="action-btn primary"
-                          disabled={controlsDisabled || !canReview}
-                          onClick={() => handleApprove(candidate.workflowId)}
-                          type="button"
-                        >
-                          {activeAction?.workflowId === candidate.workflowId && activeAction.kind === "approve"
-                            ? "Approving..."
-                            : "Approve"}
-                        </button>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Workflow</th>
+                <th>Status</th>
+                <th>Impact</th>
+                <th>Namespace</th>
+                <th>Confidence</th>
+                <th>Utility</th>
+                <th>Overlap</th>
+                <th>Contradiction</th>
+                <th>Stale Use</th>
+                <th>Conflicts</th>
+                <th>Updated</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.workflowCandidates.map((candidate) => (
+                <tr key={candidate.workflowId}>
+                  <td>{candidate.title}</td>
+                  <td>
+                    <span className={`status-pill ${candidate.status}`}>{candidate.status.replace("_", " ")}</span>
+                  </td>
+                  <td>
+                    <SeverityBadge severity={candidate.impactLevel} />
+                  </td>
+                  <td>{candidate.namespace}</td>
+                  <td>{percentage(candidate.confidenceScore)}</td>
+                  <td>{percentage(candidate.utilityRate)}</td>
+                  <td>{percentage(candidate.overlapRate)}</td>
+                  <td>{percentage(candidate.contradictionRate)}</td>
+                  <td>{percentage(candidate.staleUseRate)}</td>
+                  <td>{candidate.conflictCount}</td>
+                  <td>{new Date(candidate.updatedAt).toLocaleString()}</td>
+                  <td>
+                    <div className="action-group">
+                      {candidate.status === "pending_review" ? (
+                        <>
+                          <button
+                            className="action-btn primary"
+                            disabled={controlsDisabled || !canReview}
+                            onClick={() => handleApprove(candidate.workflowId)}
+                            type="button"
+                          >
+                            {activeAction?.workflowId === candidate.workflowId && activeAction.kind === "approve"
+                              ? "Approving..."
+                              : "Approve"}
+                          </button>
+                          <button
+                            className="action-btn danger"
+                            disabled={controlsDisabled || !canReview}
+                            onClick={() => handleReject(candidate.workflowId)}
+                            type="button"
+                          >
+                            {activeAction?.workflowId === candidate.workflowId && activeAction.kind === "reject"
+                              ? "Rejecting..."
+                              : "Reject"}
+                          </button>
+                        </>
+                      ) : null}
+                      {candidate.status === "promoted" ? (
                         <button
                           className="action-btn danger"
-                          disabled={controlsDisabled || !canReview}
-                          onClick={() => handleReject(candidate.workflowId)}
+                          disabled={controlsDisabled || !canRollback}
+                          onClick={() => handleRollback(candidate.workflowId)}
                           type="button"
                         >
-                          {activeAction?.workflowId === candidate.workflowId && activeAction.kind === "reject"
-                            ? "Rejecting..."
-                            : "Reject"}
+                          {activeAction?.workflowId === candidate.workflowId && activeAction.kind === "rollback"
+                            ? "Rolling Back..."
+                            : "Rollback"}
                         </button>
-                      </>
-                    ) : null}
-                    {candidate.status === "promoted" ? (
-                      <button
-                        className="action-btn danger"
-                        disabled={controlsDisabled || !canRollback}
-                        onClick={() => handleRollback(candidate.workflowId)}
-                        type="button"
-                      >
-                        {activeAction?.workflowId === candidate.workflowId && activeAction.kind === "rollback"
-                          ? "Rolling Back..."
-                          : "Rollback"}
-                      </button>
-                    ) : null}
-                    {candidate.status !== "pending_review" && candidate.status !== "promoted" ? (
-                      <span className="muted-note">No action</span>
-                    ) : null}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                      ) : null}
+                      {candidate.status !== "pending_review" && candidate.status !== "promoted" ? (
+                        <span className="muted-note">No action</span>
+                      ) : null}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </article>
     </section>
   );

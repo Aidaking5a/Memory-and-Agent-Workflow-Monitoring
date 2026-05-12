@@ -8,6 +8,7 @@ Theia is a premium, consent-based memory and agent workflow orchestration platfo
 - Local core ingestion and timeline service (`apps/local-core`)
 - Optional control plane with SAML-ready auth and login-volume dashboard (`apps/control-plane`)
 - Canonical schema package for workflow and memory entities (`packages/event-schema`)
+- Canonical private-agent reporting protocol (`packages/agent-protocol`)
 - Connector SDK for authorized data sources (`packages/connector-sdk`)
 - Reasoning quality detection engine (`packages/reasoning-engine`)
 - Policy and permission engine with audit chaining (`packages/policy-engine`)
@@ -60,6 +61,8 @@ Desktop URL: `http://localhost:5173` (fixed dev port).
 
 Important: local-core now requires sign-in for sensitive routes. On first run, create your local account in the desktop sign-in screen.
 
+Open the `Live Reporting Dashboard` after sign-in to use the private Agent Command Center: register agents, issue per-agent telemetry tokens, inspect the live network, query or steer agents, create collaboration links, and trigger emergency stop.
+
 6. (Optional) Run marketing website locally:
 
 ```bash
@@ -67,6 +70,12 @@ pnpm run dev:website
 ```
 
 Website URL: `http://localhost:4173`.
+
+Windows one-liner that starts the marketing site, writes logs, checks readiness, and opens the browser:
+
+```powershell
+pnpm.cmd run dev:marketing
+```
 
 ## Desktop Installer Packaging (.exe/.dmg)
 
@@ -152,6 +161,18 @@ pnpm run dev:stack
 
 This now also starts the local website server on `http://localhost:4173`.
 
+Dashboard-only one-liner (local core + desktop dashboard, no Docker/Keycloak/control plane):
+
+```powershell
+pnpm.cmd run dev:dashboard
+```
+
+Marketing-site one-liner (static site only):
+
+```powershell
+pnpm.cmd run dev:marketing
+```
+
 If another process is blocking `localhost:5173`, reclaim it automatically for Theia desktop:
 
 ```powershell
@@ -169,6 +190,86 @@ Stop all local services:
 ```powershell
 pnpm run dev:stop
 ```
+
+Smoke-test the running local infrastructure:
+
+```powershell
+pnpm.cmd run test:local-infra
+```
+
+Dashboard-only smoke test:
+
+```powershell
+pnpm.cmd run test:dashboard
+```
+
+Marketing-only smoke test:
+
+```powershell
+pnpm.cmd run test:marketing
+```
+
+Manual setup and test details live in:
+
+- `docs/local-infrastructure-runbook.md`
+
+## Agent Command Center
+
+Theia now includes a local-first private agent network dashboard.
+
+Core endpoints:
+
+- `GET /agent-network/snapshot`
+- `GET /agent-network/agents`
+- `POST /agent-network/agents`
+- `POST /agent-network/discover`
+- `POST /agent-network/telemetry/events`
+- `GET /agent-network/stream`
+- `POST /agent-network/control`
+- `POST /agent-network/links`
+- `POST /agent-network/links/:linkId/break`
+
+Private agents report with the `agent-activity/v1` schema from `packages/agent-protocol`. Reports include what the agent is doing, where it is working, how it is working, resource usage, status, risk, safe reasoning summaries, decision traces, and tool-call logs. Hidden chain-of-thought should never be reported.
+
+The desktop app now exposes only three customer-facing command-center views:
+
+- `Live Reporting Dashboard`: live bubble network, collaboration links, deep-dive panels, setup helpers, and Query/Steering/Emergency Stop/Break Link/Make Link/Focus Together controls.
+- `Agent Stats`: system memory, runtime, token usage, estimated spend, and per-agent breakdowns.
+- `Agent Card Deck`: FIFA-style practical cards for each agent's identity, model/vendor, memory/soul summary, skills/connectors, usage, and trust/control level.
+
+Architecture and protocol details:
+
+- `docs/agent-command-center-architecture.md`
+- `packages/agent-protocol/templates/orchestrator/soul.md`
+- `packages/agent-protocol/templates/orchestrator/memory.md`
+
+## Distribution Strategy
+
+Recommended customer paths:
+
+1. Windows installer for non-technical users: build with `pnpm run build:desktop:installer:win`.
+2. Clone-based developer setup: clone the repo, run `pnpm.cmd install`, then `pnpm run dev:stack`.
+3. One-line bootstrap: a transparent Windows PowerShell script that clones the repo, checks prerequisites, prints every planned step, and offers a reversible cleanup path.
+
+One-line bootstrap from a trusted checkout:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-theia-command-center.ps1
+```
+
+Run the local dashboard stack with the OpenClaw install rooted at `C:\Users\admin_1\src\openclaw`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-theia-dashboard.ps1 -OpenClawPath "C:\Users\admin_1\src\openclaw"
+```
+
+One-line bootstrap from GitHub after reviewing the script URL and repository:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://raw.githubusercontent.com/aidaking5a/Memory-and-Agent-Workflow-Monitoring/main/scripts/install-theia-command-center.ps1'; $p=Join-Path $env:TEMP 'install-theia-command-center.ps1'; Invoke-WebRequest $u -OutFile $p; powershell -NoProfile -ExecutionPolicy Bypass -File $p"
+```
+
+The installer/bootstrap path should not silently install Node, Rust, Visual Studio Build Tools, Docker, WSL, or paid API connectors. Prompt before privileged installs and keep clone-based setup available for OpenClaw-style developers.
 
 ## Lead Intake And Tracking
 
@@ -302,8 +403,10 @@ Local core environment variables:
 - `THEIA_FILE_SOURCES=memory.md,bootstrap.md`
 - `THEIA_CODEX_LOG_SOURCES=/path/to/codex.log`
 - `THEIA_CUSTOM_JSON_SOURCES=/path/to/events.json`
-- `THEIA_OPENCLAW_LOG_SOURCES=/path/to/openclaw.jsonl`
-- `THEIA_APPROVED_PATHS=/approved/path/one,/approved/path/two`
+- `THEIA_OPENCLAW_WORKSPACE_PATH=C:\Users\admin_1\src\openclaw`
+- `THEIA_OPENCLAW_DISCOVERY_PATHS=C:\Users\admin_1\src\openclaw`
+- `THEIA_OPENCLAW_LOG_SOURCES=C:\Users\admin_1\src\openclaw`
+- `THEIA_APPROVED_PATHS=.,C:\Users\admin_1\src\openclaw`
 
 ## SAML Setup (Free-Provider Friendly)
 

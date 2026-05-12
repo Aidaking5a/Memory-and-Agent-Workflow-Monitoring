@@ -9,6 +9,31 @@ This folder now contains both messaging drafts and a production-ready static web
 - Pages: home, product, use-cases, security, pricing, resources, contact, keyword guides, changelog, case studies, 404
 - SEO: canonical tags, Open Graph, Twitter card, robots.txt, sitemap.xml, RSS feed, JSON-LD
 
+## Local One-Liner
+
+From the repository root on Windows:
+
+```powershell
+pnpm.cmd run dev:marketing
+```
+
+Equivalent direct script:
+
+```powershell
+.\scripts\start-theia-marketing-site.cmd
+```
+
+This starts the static website server, writes logs to `.theia/dev-logs/marketing-site.log`, checks readiness, and opens:
+
+- `http://localhost:4173/`
+- `http://localhost:4173/contact.html`
+
+Smoke test:
+
+```powershell
+pnpm.cmd run test:marketing
+```
+
 ## Publish
 
 The GitHub Pages deployment workflow is at `.github/workflows/pages.yml`.

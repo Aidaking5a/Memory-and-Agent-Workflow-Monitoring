@@ -6,18 +6,15 @@ interface SidebarProps {
   onSelect: (view: ViewKey) => void;
 }
 
-const NAV_ITEMS: Array<{ key: ViewKey; label: string }> = [
-  { key: "onboarding", label: "OpenClaw Setup" },
-  { key: "openclaw", label: "OpenClaw Operations" },
-  { key: "overview", label: "Overview" },
-  { key: "agents", label: "Agent Health" },
-  { key: "timeline", label: "Workflow Timeline" },
-  { key: "memory", label: "Memory Explorer" },
-  { key: "alerts", label: "Reasoning Alerts" },
-  { key: "governance", label: "Workflow Governance" },
-  { key: "compare", label: "Agent Comparison" },
-  { key: "audit", label: "Audit & Permissions" },
-  { key: "settings", label: "Settings" }
+const NAV_ITEMS: Array<{ key: ViewKey; label: string; meta: string; glyph: string }> = [
+  { key: "dashboard", label: "Overview", meta: "Command Surface", glyph: "OVR" },
+  { key: "network", label: "Network", meta: "Live Infographic", glyph: "NET" },
+  { key: "cards", label: "Agents", meta: "Card Directory", glyph: "AGT" },
+  { key: "activity", label: "Activity", meta: "Live Event Log", glyph: "ACT" },
+  { key: "costs", label: "Costs", meta: "Usage & Budgets", glyph: "USD" },
+  { key: "security", label: "Security", meta: "Audit & Safety", glyph: "SEC" },
+  { key: "settings", label: "Settings", meta: "Connections", glyph: "CFG" },
+  { key: "help", label: "Help", meta: "Guides & Support", glyph: "HLP" }
 ];
 
 export function Sidebar({ current, onSelect }: SidebarProps) {
@@ -29,7 +26,7 @@ export function Sidebar({ current, onSelect }: SidebarProps) {
         </div>
         <div>
           <h1>Theia</h1>
-          <p>Agent Operations</p>
+          <p>Agent Command Center</p>
         </div>
       </div>
       <nav>
@@ -40,7 +37,11 @@ export function Sidebar({ current, onSelect }: SidebarProps) {
             onClick={() => onSelect(item.key)}
             type="button"
           >
-            {item.label}
+            <span className="nav-glyph">{item.glyph}</span>
+            <span className="nav-copy">
+              <strong>{item.label}</strong>
+              <small>{item.meta}</small>
+            </span>
           </button>
         ))}
       </nav>

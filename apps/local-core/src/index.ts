@@ -2,13 +2,18 @@
 import Fastify from "fastify";
 import { access, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { agentActivityEventSchema, agentControlCommandSchema, agentProfileSchema, collaborationLinkSchema } from "@theia/agent-protocol";
 import { evaluateRun } from "@theia/reasoning-engine";
 import { TheiaCore } from "./core.js";
 import { createHighRiskNotificationEngine } from "./high-risk-notifications.js";
+import { createCorsPolicy, evaluateCorsOrigin } from "./http-security.js";
 import { LocalAuthStore } from "./local-auth.js";
 import { OpsEmailNotifier } from "./ops-email.js";
+import { buildOpenClawPairingCreatedResponse } from "./openclaw-pairing-routes.js";
 import { OpenClawTelemetryHub } from "./openclaw-telemetry.js";
 const execFileAsync = promisify(execFile);
 const workspaceId = process.env.THEIA_WORKSPACE_ID ?? "ws_local_default";
@@ -28,9 +33,17 @@ const trustedGatewayRestartCommand = process.env.THEIA_OPENCLAW_RESTART_COMMAND?
 const defaultOpsAdminEmail = process.env.THEIA_OPS_ADMIN_EMAIL?.trim() || "windsurf345@outlook.com";
 const localCorePort = Number(process.env.THEIA_CORE_PORT ?? 4318);
 const localCoreBaseUrl = text(process.env.THEIA_LOCAL_CORE_BASE_URL) ?? `http://localhost:${localCorePort}`;
+const corsPolicy = createCorsPolicy({
+    allowedOrigins: process.env.THEIA_ALLOWED_ORIGINS
+});
 const operatorRoleHeader = "x-theia-operator-role";
 const operatorIdHeader = "x-theia-operator-id";
 const defaultOperatorRole = normalizeRole(process.env.THEIA_OPERATOR_ROLE);
+const defaultOpenClawInstallPath = path.resolve(text(process.env.THEIA_OPENCLAW_WORKSPACE_PATH) ?? path.join(os.homedir(), "src", "openclaw"));
+const openClawDiscoveryPaths = uniq([
+    defaultOpenClawInstallPath,
+    ...parseList(process.env.THEIA_OPENCLAW_DISCOVERY_PATHS ?? "")
+].map((entry) => path.resolve(entry)));
 const roleCapabilities = {
     owner: ["setup:write", "plugin:write", "alert:write", "workflow:review", "workflow:rollback", "workflow:retire", "workflow:policy:write"],
     operator: ["setup:write", "plugin:write", "alert:write", "workflow:review", "workflow:rollback", "workflow:retire"],
@@ -74,6 +87,14 @@ const openClawTelemetry = new OpenClawTelemetryHub({
     dedupeWindowMs: openClawTelemetryDedupeWindowSeconds * 1000
 });
 const openClawSseSubscribers = new Set();
+const agentNetworkMaxEvents = Math.max(500, Math.min(50000, num(process.env.THEIA_AGENT_NETWORK_MAX_EVENTS) ?? 8000));
+const agentRegistry = new Map();
+const agentSecrets = new Map();
+const agentActivityEvents = [];
+const collaborationLinks = new Map();
+const agentControlCommands = [];
+const agentSseSubscribers = new Set();
+const agentEventDedupe = new Map();
 const emergencyState = {
     status: "ready",
     isStopped: false,
@@ -98,7 +119,10 @@ let scheduledPersistTimer = undefined;
 const authAttemptCache = new Map();
 const authRateLimitWindowMs = Math.max(10_000, Math.min(30 * 60_000, (num(process.env.THEIA_AUTH_RATE_LIMIT_WINDOW_SECONDS) ?? 300) * 1000));
 const authRateLimitMaxAttempts = Math.max(3, Math.min(30, num(process.env.THEIA_AUTH_RATE_LIMIT_MAX_ATTEMPTS) ?? 8));
-const approvedPaths = new Set((process.env.THEIA_APPROVED_PATHS ?? process.cwd()).split(",").map((x) => path.resolve(x.trim())).filter(Boolean));
+const approvedPaths = new Set(uniq([
+    ...parseList(process.env.THEIA_APPROVED_PATHS ?? process.cwd()).map((x) => path.resolve(x)),
+    ...openClawDiscoveryPaths
+]));
 const sources = {
     fileSources: parseList(process.env.THEIA_FILE_SOURCES ?? "memory.md,bootstrap.md").map((x) => path.resolve(x)),
     codexLogSources: parseList(process.env.THEIA_CODEX_LOG_SOURCES ?? "").map((x) => path.resolve(x)),
@@ -132,7 +156,8 @@ const setup = {
         readPrompts: true
     },
     health: { status: "degraded", checks: [] },
-    runtime: runtimeView()
+    runtime: runtimeView(),
+    knownOpenClawPaths: [...openClawDiscoveryPaths]
 };
 const localAuth = new LocalAuthStore(localAuthFilePath, {
     sessionTtlHours: num(process.env.THEIA_AUTH_SESSION_TTL_HOURS) ?? 72
@@ -141,6 +166,7 @@ const opsEmail = new OpsEmailNotifier(opsEmailFilePath);
 await localAuth.init();
 await opsEmail.init();
 await hydrateFromStateFile();
+ensureBuiltinOrchestratorAgent();
 syncSetupConnectedFlag();
 if (setup.connected)
     setup.lastConnectedAt = new Date().toISOString();
@@ -148,11 +174,19 @@ let core = await buildCore();
 await validateSetup(false);
 const app = Fastify({ logger: false });
 app.addHook("onRequest", async (request, reply) => {
-    reply.header("Access-Control-Allow-Origin", "*");
-    reply.header("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS");
-    reply.header("Access-Control-Allow-Headers", `Authorization, Content-Type, ${operatorRoleHeader}, ${operatorIdHeader}, x-theia-pairing-id, x-theia-pairing-token, x-openclaw-pairing-token`);
+    const cors = evaluateCorsOrigin(request.headers?.origin, corsPolicy);
+    if (!cors.allowed) {
+        reply.code(403);
+        return reply.send({ message: cors.reason ?? "Origin is not allowed." });
+    }
+    if (cors.origin) {
+        reply.header("Access-Control-Allow-Origin", cors.origin);
+        reply.header("Vary", "Origin");
+    }
+    reply.header("Access-Control-Allow-Methods", corsPolicy.methods);
+    reply.header("Access-Control-Allow-Headers", corsPolicy.headers);
     if (request.method === "OPTIONS") {
-        reply.code(204).send();
+        return reply.code(204).send();
     }
 });
 app.addHook("preHandler", async (request, reply) => {
@@ -160,7 +194,7 @@ app.addHook("preHandler", async (request, reply) => {
         return;
     }
     const url = request.url.split("?")[0] ?? request.url;
-    if (url === "/health" || url.startsWith("/auth/") || url === "/openclaw/telemetry/events") {
+    if (url === "/health" || url.startsWith("/auth/") || url === "/openclaw/telemetry/events" || url === "/agent-network/telemetry/events") {
         return;
     }
     const token = bearerToken(request.headers?.authorization);
@@ -443,6 +477,7 @@ app.get("/dashboard/snapshot", async (request) => {
     });
     const alerts = rawAlerts.map((alert) => applyAlertOverride(alert));
     const openClawLive = buildOpenClawLive(events, runs, pluginRows);
+    const agentNetwork = buildAgentNetworkSnapshot();
     const notificationCenter = {
         settings: highRiskEngine.getSettings(),
         taxonomy: highRiskEngine.getTaxonomy(),
@@ -471,6 +506,7 @@ app.get("/dashboard/snapshot", async (request) => {
         connection: { ...setup, runtime: runtimeView() },
         operator,
         openClawLive,
+        agentNetwork,
         metrics: buildMetrics(agents, runs, alerts, tokenSeries, connectorHealth, pluginRows, memoryRows, notificationCenter),
         agents,
         runs: runs.map((run) => summarizeRun(run, events)),
@@ -613,16 +649,11 @@ app.post("/openclaw/pairings", async (request, reply) => {
         pairingId: created.pairing.pairingId,
         snapshot: buildOpenClawSseSnapshot()
     });
-    const commands = buildPairingCommands(created.pairing.pairingId, created.token);
-    return {
-        pairingId: created.pairing.pairingId,
-        label: created.pairing.label,
-        expiresAt: created.pairing.expiresAt,
-        telemetryEndpoint: `${localCoreBaseUrl}/openclaw/telemetry/events`,
-        streamEndpoint: `${localCoreBaseUrl}/openclaw/telemetry/stream`,
-        token: created.token,
-        commands
-    };
+    return buildOpenClawPairingCreatedResponse({
+        localCoreBaseUrl,
+        pairing: created.pairing,
+        token: created.token
+    });
 });
 app.post("/openclaw/pairings/:pairingId/revoke", async (request, reply) => {
     const operator = operatorContext(request);
@@ -1002,6 +1033,294 @@ app.get("/openclaw/emergency-audit", async (request) => {
         return [];
     }
 });
+app.get("/agent-network/snapshot", async (request) => {
+    return {
+        ...buildAgentNetworkSnapshot(),
+        operator: operatorContext(request)
+    };
+});
+app.get("/agent-network/agents", async (request) => {
+    return {
+        generatedAt: new Date().toISOString(),
+        operator: operatorContext(request),
+        agents: serializeAgentRegistry()
+    };
+});
+app.post("/agent-network/agents", async (request, reply) => {
+    const operator = operatorContext(request);
+    if (!requireCapability(reply, operator, "setup:write", "register private agent")) {
+        return denyCapability(operator, "setup:write");
+    }
+    try {
+        const created = registerAgentProfile(request.body ?? {}, operator);
+        await persistState("agent-network.agent.register");
+        broadcastAgentSse({
+            type: "agent_registered",
+            generatedAt: new Date().toISOString(),
+            agentId: created.profile.agentId,
+            snapshot: buildAgentNetworkSnapshot()
+        });
+        core.addOperationalAudit("agent_network.agent.register", operator.actorId, created.profile.agentId, {
+            connectionKind: created.profile.connectionKind,
+            controlLevel: created.profile.controlLevel
+        });
+        return {
+            agent: decorateAgentProfile(created.profile),
+            telemetryToken: created.telemetryToken,
+            telemetryEndpoint: `${localCoreBaseUrl}/agent-network/telemetry/events`,
+            commands: buildAgentTelemetryCommands(created.profile, created.telemetryToken),
+            operator
+        };
+    }
+    catch (error) {
+        reply.code(400);
+        return { message: error instanceof Error ? error.message : "Unable to register agent." };
+    }
+});
+app.post("/agent-network/discover", async (request, reply) => {
+    const operator = operatorContext(request);
+    if (!requireCapability(reply, operator, "setup:write", "discover private agents")) {
+        return denyCapability(operator, "setup:write");
+    }
+    const workspacePath = path.resolve(text(request.body?.workspacePath) ?? setup.workspacePath ?? process.cwd());
+    if (!(await isDir(workspacePath))) {
+        reply.code(400);
+        return { message: `Workspace path does not exist: ${workspacePath}` };
+    }
+    if (!isApproved(workspacePath)) {
+        reply.code(403);
+        return { message: "Workspace path is outside approved scope." };
+    }
+    const candidates = await discoverAgentCandidates(workspacePath);
+    const now = new Date().toISOString();
+    for (const candidate of candidates.autoRegisterable) {
+        if (agentRegistry.has(candidate.agentId)) {
+            const current = agentRegistry.get(candidate.agentId);
+            agentRegistry.set(candidate.agentId, {
+                ...current,
+                ...candidate,
+                updatedAt: now
+            });
+        }
+        else {
+            const profile = agentProfileSchema.parse({
+                ...candidate,
+                registeredAt: now,
+                updatedAt: now
+            });
+            agentRegistry.set(profile.agentId, profile);
+        }
+    }
+    await persistState("agent-network.discover");
+    broadcastAgentSse({
+        type: "agent_discovery",
+        generatedAt: now,
+        registeredCount: candidates.autoRegisterable.length,
+        manualCount: candidates.manual.length,
+        snapshot: buildAgentNetworkSnapshot()
+    });
+    return {
+        generatedAt: now,
+        workspacePath,
+        registered: candidates.autoRegisterable.map((candidate) => decorateAgentProfile(agentRegistry.get(candidate.agentId))),
+        manual: candidates.manual,
+        operator
+    };
+});
+app.post("/agent-network/telemetry/events", async (request, reply) => {
+    const records = normalizeAgentTelemetryBody(request.body ?? {});
+    if (records.length === 0) {
+        reply.code(400);
+        return { message: "At least one agent activity event is required." };
+    }
+    const accepted = [];
+    const rejected = [];
+    const deduped = [];
+    for (const raw of records) {
+        const parsed = agentActivityEventSchema.safeParse(raw);
+        if (!parsed.success) {
+            rejected.push({
+                eventId: text(raw?.eventId),
+                message: "Invalid agent activity event.",
+                issues: parsed.error.issues.map((issue) => ({
+                    path: issue.path.join("."),
+                    message: issue.message
+                }))
+            });
+            continue;
+        }
+        const event = parsed.data;
+        const auth = authenticateAgentTelemetry(request, event);
+        if (!auth.ok) {
+            rejected.push({
+                eventId: event.eventId,
+                agentId: event.agent.agentId,
+                message: auth.message
+            });
+            continue;
+        }
+        const dedupeKey = `${event.agent.agentId}:${event.eventId}`;
+        if (agentEventDedupe.has(dedupeKey)) {
+            deduped.push(event.eventId);
+            continue;
+        }
+        cacheAgentEventKey(dedupeKey);
+        const sanitized = sanitizeAgentActivityEvent(event);
+        accepted.push(sanitized);
+        ingestAgentActivityEvent(sanitized);
+    }
+    if (accepted.length > 0) {
+        const mapped = accepted.map((event) => agentActivityToWorkflowEvent(event));
+        for (const workflowEvent of mapped) {
+            core.addEvent(workflowEvent);
+        }
+        highRiskEngine.ingestEvents(mapped);
+        await persistState("agent-network.telemetry.ingest");
+        broadcastAgentSse({
+            type: "agent_telemetry",
+            generatedAt: new Date().toISOString(),
+            acceptedCount: accepted.length,
+            rejectedCount: rejected.length,
+            dedupedCount: deduped.length,
+            snapshot: buildAgentNetworkSnapshot()
+        });
+    }
+    else if (rejected.length > 0) {
+        await persistState("agent-network.telemetry.rejected");
+    }
+    return {
+        accepted: accepted.length,
+        rejected: rejected.length,
+        deduped: deduped.length,
+        issues: rejected.slice(0, 20)
+    };
+});
+app.get("/agent-network/stream", async (request, reply) => {
+    const operator = operatorContext(request);
+    reply.hijack();
+    const raw = reply.raw;
+    raw.statusCode = 200;
+    raw.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    raw.setHeader("Cache-Control", "no-cache, no-transform");
+    raw.setHeader("Connection", "keep-alive");
+    raw.setHeader("X-Accel-Buffering", "no");
+    raw.write(`event: ready\ndata: ${JSON.stringify({ generatedAt: new Date().toISOString(), operator })}\n\n`);
+    raw.write(`event: snapshot\ndata: ${JSON.stringify(buildAgentNetworkSnapshot())}\n\n`);
+    const subscriber = (payload) => {
+        try {
+            raw.write(`event: update\ndata: ${JSON.stringify(payload)}\n\n`);
+        }
+        catch {
+            // disconnected
+        }
+    };
+    agentSseSubscribers.add(subscriber);
+    const keepAlive = setInterval(() => {
+        try {
+            raw.write(`event: ping\ndata: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`);
+        }
+        catch {
+            // disconnected
+        }
+    }, 15000);
+    const close = () => {
+        clearInterval(keepAlive);
+        agentSseSubscribers.delete(subscriber);
+        try {
+            raw.end();
+        }
+        catch {
+            // no-op
+        }
+    };
+    request.raw.on("close", close);
+    request.raw.on("end", close);
+});
+app.post("/agent-network/control", async (request, reply) => {
+    const operator = operatorContext(request);
+    if (!requireCapability(reply, operator, "setup:write", "control private agent")) {
+        return denyCapability(operator, "setup:write");
+    }
+    try {
+        const result = await executeAgentControlCommand(request.body ?? {}, operator);
+        await persistState("agent-network.control");
+        broadcastAgentSse({
+            type: "agent_control",
+            generatedAt: new Date().toISOString(),
+            command: result.command,
+            snapshot: buildAgentNetworkSnapshot()
+        });
+        return result;
+    }
+    catch (error) {
+        reply.code(400);
+        return { message: error instanceof Error ? error.message : "Unable to apply control command." };
+    }
+});
+app.post("/agent-network/links", async (request, reply) => {
+    const operator = operatorContext(request);
+    if (!requireCapability(reply, operator, "setup:write", "link private agents")) {
+        return denyCapability(operator, "setup:write");
+    }
+    try {
+        const link = makeAgentCollaborationLink(request.body ?? {}, operator);
+        await persistState("agent-network.link.make");
+        broadcastAgentSse({
+            type: "agent_link",
+            generatedAt: new Date().toISOString(),
+            link,
+            snapshot: buildAgentNetworkSnapshot()
+        });
+        return { link, operator };
+    }
+    catch (error) {
+        reply.code(400);
+        return { message: error instanceof Error ? error.message : "Unable to create collaboration link." };
+    }
+});
+app.post("/agent-network/links/:linkId/break", async (request, reply) => {
+    const operator = operatorContext(request);
+    if (!requireCapability(reply, operator, "setup:write", "break private agent link")) {
+        return denyCapability(operator, "setup:write");
+    }
+    const linkId = text(request.params?.linkId);
+    const link = linkId ? collaborationLinks.get(linkId) : undefined;
+    if (!link) {
+        reply.code(404);
+        return { message: "Collaboration link not found." };
+    }
+    const now = new Date().toISOString();
+    const updated = {
+        ...link,
+        status: "broken",
+        updatedAt: now
+    };
+    collaborationLinks.set(updated.linkId, updated);
+    const command = createAgentControlAuditCommand({
+        action: "break_link",
+        actorId: operator.actorId,
+        linkIds: [updated.linkId],
+        agentIds: [updated.sourceAgentId, updated.targetAgentId],
+        reason: text(request.body?.reason) ?? "Collaboration link broken by operator.",
+        resultSummary: "Collaboration link is broken. Shared task execution is blocked until a new scoped link is made.",
+        affectedResources: [`link:${updated.linkId}`]
+    });
+    agentControlCommands.unshift(command);
+    trimAgentControlCommands();
+    core.addOperationalAudit("agent_network.link.break", operator.actorId, updated.linkId, {
+        agentIds: command.agentIds,
+        reason: command.reason
+    });
+    await persistState("agent-network.link.break");
+    broadcastAgentSse({
+        type: "agent_link_broken",
+        generatedAt: now,
+        link: updated,
+        command,
+        snapshot: buildAgentNetworkSnapshot()
+    });
+    return { link: updated, command, operator };
+});
 app.get("/alerts", async () => {
     const runs = deriveRuns(core.listRuns(), core.listEvents());
     const events = core.listEvents();
@@ -1321,7 +1640,7 @@ async function performIngestion() {
         }
     }
     const mergedEvents = [...ingest.events, ...runtimeEvents];
-    const highRisk = highRiskEngine.ingestEvents(mergedEvents);
+    const highRisk = highRiskEngine.ingestEvents(runtimeEvents);
     return {
         ...ingest,
         events: mergedEvents,
@@ -1879,38 +2198,6 @@ function extractPairingToken(request) {
     }
     return text(request.body?.token) ?? text(request.body?.pairingToken);
 }
-function buildPairingCommands(pairingId, token) {
-    const endpoint = `${localCoreBaseUrl}/openclaw/telemetry/events`;
-    const payload = {
-        events: [
-            {
-                eventType: "agent.connected",
-                status: "ok",
-                message: "OpenClaw pairing test event from terminal.",
-                timestamp: new Date().toISOString(),
-                runId: "run:openclaw",
-                agentId: "agent:openclaw",
-                severity: "info",
-                confidence: 0.9,
-                source: "openclaw-hook"
-            }
-        ]
-    };
-    return {
-        powershell: [
-            `$env:THEIA_OPENCLAW_PAIRING_ID='${pairingId}'`,
-            `$env:THEIA_OPENCLAW_PAIRING_TOKEN='${token}'`,
-            `$env:THEIA_OPENCLAW_TELEMETRY_ENDPOINT='${endpoint}'`,
-            "Invoke-RestMethod -Method Post -Uri $env:THEIA_OPENCLAW_TELEMETRY_ENDPOINT -Headers @{ Authorization = \"Bearer $env:THEIA_OPENCLAW_PAIRING_TOKEN\"; \"x-theia-pairing-id\" = $env:THEIA_OPENCLAW_PAIRING_ID } -ContentType \"application/json\" -Body '{\"events\":[{\"eventType\":\"agent.connected\",\"status\":\"ok\",\"message\":\"OpenClaw pairing test event from terminal.\",\"timestamp\":\"' + (Get-Date).ToUniversalTime().ToString(\"o\") + '\",\"runId\":\"run:openclaw\",\"agentId\":\"agent:openclaw\",\"severity\":\"info\",\"confidence\":0.9,\"source\":\"openclaw-hook\"}]}'"
-        ],
-        bash: [
-            `export THEIA_OPENCLAW_PAIRING_ID='${pairingId}'`,
-            `export THEIA_OPENCLAW_PAIRING_TOKEN='${token}'`,
-            `export THEIA_OPENCLAW_TELEMETRY_ENDPOINT='${endpoint}'`,
-            `curl -X POST "$THEIA_OPENCLAW_TELEMETRY_ENDPOINT" -H "Authorization: Bearer $THEIA_OPENCLAW_PAIRING_TOKEN" -H "x-theia-pairing-id: $THEIA_OPENCLAW_PAIRING_ID" -H "Content-Type: application/json" -d '${JSON.stringify(payload)}'`
-        ]
-    };
-}
 function toWorkflowEvent(telemetryEvent) {
     const inferredType = inferOpenClawRuntimeEventType({
         eventType: telemetryEvent.eventType,
@@ -1981,6 +2268,1160 @@ function broadcastOpenClawSse(payload) {
             // no-op
         }
     }
+}
+function ensureBuiltinOrchestratorAgent() {
+    const now = new Date().toISOString();
+    const existing = agentRegistry.get("agent:theia-orchestrator");
+    const profile = agentProfileSchema.parse({
+        agentId: "agent:theia-orchestrator",
+        name: "Theia Orchestrator",
+        role: "Main Orchestrator",
+        domain: "command_center",
+        model: "policy-orchestrator",
+        vendor: "Theia",
+        connectionKind: "local",
+        status: emergencyState.isStopped ? "blocked" : "active",
+        endpointLabel: "local-core",
+        tools: ["agent registry", "policy engine", "audit log", "dashboard update"],
+        skills: ["activity classification", "safe reasoning summaries", "collaboration routing"],
+        connectors: ["local-core", "openclaw", "agent-network"],
+        memorySummary: "Tracks registered private agents, collaboration links, operator commands, and recent telemetry summaries.",
+        soulSummary: "Coordinate private agents through explicit links, validated telemetry, redacted summaries, and visible operator controls. Never expose hidden chain-of-thought.",
+        controlLevel: "full",
+        canCollaborate: true,
+        canEmergencyStop: false,
+        trustLevel: "trusted",
+        registeredAt: existing?.registeredAt ?? now,
+        updatedAt: now
+    });
+    agentRegistry.set(profile.agentId, {
+        ...profile,
+        lastSeenAt: now,
+        system: true
+    });
+}
+function registerAgentProfile(input, operator) {
+    const now = new Date().toISOString();
+    const name = text(input.name) ?? text(input.agentName) ?? "Private Agent";
+    const requestedId = text(input.agentId) ?? `agent:${slugifyAgentName(name)}:${randomUUID().slice(0, 8)}`;
+    const existing = agentRegistry.get(requestedId);
+    const candidate = {
+        agentId: requestedId,
+        name,
+        role: text(input.role) ?? text(input.domain) ?? existing?.role ?? "Agent",
+        domain: text(input.domain) ?? existing?.domain ?? "general",
+        model: text(input.model) ?? existing?.model,
+        vendor: text(input.vendor) ?? existing?.vendor,
+        connectionKind: normalizeAgentConnectionKind(input.connectionKind ?? input.kind ?? input.type),
+        status: normalizeAgentStatus(input.status) ?? existing?.status ?? "idle",
+        endpointLabel: text(input.endpointLabel) ?? text(input.endpoint) ?? existing?.endpointLabel,
+        tools: stringList(input.tools ?? input.installedTools),
+        skills: stringList(input.skills ?? input.installedSkills),
+        connectors: stringList(input.connectors ?? input.apiConnectors),
+        memorySummary: text(input.memorySummary) ?? existing?.memorySummary,
+        soulSummary: text(input.soulSummary) ?? existing?.soulSummary,
+        controlLevel: normalizeControlLevel(input.controlLevel) ?? existing?.controlLevel ?? "observe_only",
+        canCollaborate: toBool(input.canCollaborate) ?? existing?.canCollaborate ?? false,
+        canEmergencyStop: toBool(input.canEmergencyStop) ?? existing?.canEmergencyStop ?? false,
+        trustLevel: normalizeTrustLevel(input.trustLevel) ?? existing?.trustLevel ?? "standard",
+        registeredAt: existing?.registeredAt ?? now,
+        updatedAt: now
+    };
+    const profile = agentProfileSchema.parse(candidate);
+    agentRegistry.set(profile.agentId, {
+        ...existing,
+        ...profile,
+        lastSeenAt: existing?.lastSeenAt,
+        userIntroduced: true
+    });
+    let telemetryToken;
+    const rotate = toBool(input.rotateTelemetryToken) ?? !agentSecrets.has(profile.agentId);
+    if (rotate) {
+        telemetryToken = createAgentTelemetryToken();
+        agentSecrets.set(profile.agentId, {
+            tokenHash: sha256(telemetryToken),
+            createdAt: now,
+            createdBy: operator.actorId,
+            revokedAt: undefined
+        });
+    }
+    return {
+        profile: agentRegistry.get(profile.agentId),
+        telemetryToken
+    };
+}
+function buildAgentTelemetryCommands(profile, token) {
+    const endpoint = `${localCoreBaseUrl}/agent-network/telemetry/events`;
+    if (!token) {
+        return {
+            endpoint,
+            note: "Existing telemetry token is not shown again. Rotate the token to generate new setup commands."
+        };
+    }
+    const event = {
+        schemaVersion: "agent-activity/v1",
+        eventId: "evt:" + Date.now(),
+        timestamp: new Date().toISOString(),
+        workspaceId,
+        agent: {
+            agentId: profile.agentId,
+            name: profile.name,
+            role: profile.role,
+            domain: profile.domain,
+            model: profile.model,
+            vendor: profile.vendor,
+            connectionKind: profile.connectionKind
+        },
+        classification: {
+            category: "idle",
+            status: "idle",
+            riskLevel: "low",
+            confidence: 0.95
+        },
+        what: {
+            safeSummary: "Agent connected to Theia command center.",
+            decisionTrace: ["Connection test event only."]
+        },
+        where: {
+            targets: []
+        },
+        how: {
+            toolCalls: [],
+            filesAccessed: [],
+            websitesVisited: [],
+            apiCalls: [],
+            collaborationLinkIds: [],
+            userVisibleExplanation: "This verifies the telemetry token and event schema."
+        },
+        usage: {
+            model: profile.model,
+            vendor: profile.vendor
+        },
+        privacy: {
+            redactionApplied: true,
+            sensitiveKinds: []
+        }
+    };
+    const json = JSON.stringify(event).replace(/'/g, "''");
+    return {
+        endpoint,
+        powershell: [
+            `$env:THEIA_AGENT_ID='${profile.agentId}'`,
+            `$env:THEIA_AGENT_TOKEN='${token}'`,
+            `$env:THEIA_AGENT_TELEMETRY_ENDPOINT='${endpoint}'`,
+            `Invoke-RestMethod -Method Post -Uri $env:THEIA_AGENT_TELEMETRY_ENDPOINT -Headers @{ Authorization = "Bearer $env:THEIA_AGENT_TOKEN"; "x-theia-agent-id" = $env:THEIA_AGENT_ID } -ContentType "application/json" -Body '${json}'`
+        ],
+        bash: [
+            `export THEIA_AGENT_ID='${profile.agentId}'`,
+            `export THEIA_AGENT_TOKEN='${token}'`,
+            `export THEIA_AGENT_TELEMETRY_ENDPOINT='${endpoint}'`,
+            `curl -X POST "$THEIA_AGENT_TELEMETRY_ENDPOINT" -H "Authorization: Bearer $THEIA_AGENT_TOKEN" -H "x-theia-agent-id: $THEIA_AGENT_ID" -H "Content-Type: application/json" -d '${JSON.stringify(event)}'`
+        ]
+    };
+}
+function normalizeAgentTelemetryBody(body) {
+    if (Array.isArray(body)) {
+        return body.filter(Boolean);
+    }
+    if (Array.isArray(body?.events)) {
+        return body.events.filter(Boolean);
+    }
+    if (body && typeof body === "object") {
+        return [body];
+    }
+    return [];
+}
+function authenticateAgentTelemetry(request, event) {
+    if (event.workspaceId !== workspaceId) {
+        return { ok: false, message: "Telemetry workspace does not match this local core." };
+    }
+    const headerAgentId = text(request.headers?.["x-theia-agent-id"]);
+    if (headerAgentId && headerAgentId !== event.agent.agentId) {
+        return { ok: false, message: "Telemetry agent header does not match event agent." };
+    }
+    const profile = agentRegistry.get(event.agent.agentId);
+    if (!profile) {
+        return { ok: false, message: "Agent is not registered. Add it in the dashboard first." };
+    }
+    if (profile.status === "emergency-stopped") {
+        return { ok: false, message: "Agent is emergency-stopped and cannot report until an operator re-enables it." };
+    }
+    const secret = agentSecrets.get(event.agent.agentId);
+    if (!secret || secret.revokedAt) {
+        return { ok: false, message: "Agent telemetry token is missing or revoked." };
+    }
+    const token = readAgentTelemetryToken(request);
+    if (!token || sha256(token) !== secret.tokenHash) {
+        return { ok: false, message: "Agent telemetry authentication failed." };
+    }
+    return { ok: true };
+}
+function readAgentTelemetryToken(request) {
+    return bearerToken(request.headers?.authorization) ??
+        text(request.headers?.["x-theia-agent-token"]) ??
+        text(request.body?.token) ??
+        text(request.body?.agentToken);
+}
+function ingestAgentActivityEvent(event) {
+    const now = new Date().toISOString();
+    const current = agentRegistry.get(event.agent.agentId);
+    const profile = agentProfileSchema.parse({
+        agentId: event.agent.agentId,
+        name: event.agent.name,
+        role: event.agent.role,
+        domain: event.agent.domain,
+        model: event.agent.model ?? current?.model,
+        vendor: event.agent.vendor ?? current?.vendor,
+        connectionKind: event.agent.connectionKind,
+        status: event.classification.status,
+        endpointLabel: current?.endpointLabel,
+        tools: current?.tools ?? [],
+        skills: current?.skills ?? [],
+        connectors: current?.connectors ?? [],
+        memorySummary: current?.memorySummary,
+        soulSummary: current?.soulSummary,
+        controlLevel: current?.controlLevel ?? "observe_only",
+        canCollaborate: current?.canCollaborate ?? false,
+        canEmergencyStop: current?.canEmergencyStop ?? false,
+        trustLevel: current?.trustLevel ?? "standard",
+        registeredAt: current?.registeredAt ?? now,
+        updatedAt: event.timestamp
+    });
+    agentRegistry.set(profile.agentId, {
+        ...current,
+        ...profile,
+        lastSeenAt: event.timestamp,
+        lastRiskLevel: event.classification.riskLevel
+    });
+    agentActivityEvents.unshift(event);
+    if (agentActivityEvents.length > agentNetworkMaxEvents) {
+        agentActivityEvents.length = agentNetworkMaxEvents;
+    }
+    for (const linkId of event.how.collaborationLinkIds ?? []) {
+        const link = collaborationLinks.get(linkId);
+        if (!link)
+            continue;
+        collaborationLinks.set(linkId, {
+            ...link,
+            lastActivityAt: event.timestamp,
+            updatedAt: now
+        });
+    }
+}
+function sanitizeAgentActivityEvent(event) {
+    const redacted = redactSensitive(event);
+    return {
+        ...redacted,
+        privacy: {
+            ...redacted.privacy,
+            redactionApplied: true
+        }
+    };
+}
+function agentActivityToWorkflowEvent(event) {
+    const category = event.classification.category;
+    const status = event.classification.status;
+    const eventType = status === "failed" || category === "error"
+        ? "run.failed"
+        : status === "blocked" || category === "blocked"
+            ? "approval.requested"
+            : category === "tool_execution"
+                ? "tool_call.completed"
+                : category === "memory_update"
+                    ? "memory.changed"
+                    : status === "idle"
+                        ? "checkpoint.created"
+                        : "task.updated";
+    return {
+        eventId: `agent-network:${event.eventId}`,
+        workspaceId,
+        runId: event.runId ?? `run:${event.agent.agentId}`,
+        agentId: event.agent.agentId,
+        taskId: event.taskId,
+        eventType,
+        timestamp: event.timestamp,
+        payload: {
+            sourceSystem: "agent-network",
+            category,
+            customCategory: event.classification.customCategory,
+            status,
+            riskLevel: event.classification.riskLevel,
+            summary: event.what.safeSummary,
+            currentTask: event.what.currentTask,
+            objective: event.what.objective,
+            decisionTrace: event.what.decisionTrace,
+            userVisibleExplanation: event.how.userVisibleExplanation,
+            filesAccessed: event.how.filesAccessed,
+            websitesVisited: event.how.websitesVisited,
+            apiCalls: event.how.apiCalls,
+            promptTokens: event.usage.inputTokens,
+            completionTokens: event.usage.outputTokens,
+            totalTokens: event.usage.totalTokens,
+            estimatedCostUsd: event.usage.estimatedCostUsd,
+            model: event.usage.model ?? event.agent.model,
+            vendor: event.usage.vendor ?? event.agent.vendor
+        },
+        source: {
+            connectorId: "agent-network",
+            objectPath: event.privacy.rawLogRef ?? event.where.targets[0]?.ref ?? event.agent.connectionKind
+        },
+        confidence: clamp(event.classification.confidence ?? 0.75),
+        evidenceRefs: []
+    };
+}
+function buildAgentNetworkSnapshot() {
+    ensureBuiltinOrchestratorAgent();
+    const generatedAt = new Date().toISOString();
+    const profiles = serializeAgentRegistry();
+    const events = [...agentActivityEvents].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    const activeLinks = [...collaborationLinks.values()].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    const decoratedAgents = profiles.map((profile, index) => {
+        const agentEvents = events.filter((event) => event.agent.agentId === profile.agentId);
+        const stats = buildAgentStats(profile, agentEvents);
+        const latest = agentEvents[0];
+        const activityScore = computeAgentActivityScore(profile, agentEvents);
+        const activeLinkCount = activeLinks.filter((link) => link.status === "active" && (link.sourceAgentId === profile.agentId || link.targetAgentId === profile.agentId)).length;
+        return {
+            ...profile,
+            stats,
+            latestEvent: latest ? summarizeAgentEvent(latest) : undefined,
+            activityScore,
+            bubbleSize: Math.round(44 + activityScore * 72),
+            bubbleState: bubbleState(profile, latest, stats),
+            networkPosition: networkPosition(index, profiles.length),
+            activeLinkCount,
+            tokenUsage: stats.tokens,
+            costEstimateUsd: stats.estimatedCostUsd,
+            currentTool: latest?.how.toolCalls[0]?.name ?? latest?.where.targets[0]?.label,
+            currentTarget: latest?.where.targets[0],
+            currentTask: latest?.what.currentTask ?? latest?.what.safeSummary,
+            safeReasoningSummary: latest?.what.decisionTrace?.slice(0, 4) ?? []
+        };
+    });
+    const totals = decoratedAgents.reduce((acc, agent) => {
+        acc.inputTokens += agent.stats.tokens.inputTokens;
+        acc.outputTokens += agent.stats.tokens.outputTokens;
+        acc.totalTokens += agent.stats.tokens.totalTokens;
+        acc.estimatedCostUsd += agent.stats.estimatedCostUsd;
+        acc.runtimeMs += agent.stats.runtimeMs;
+        acc.logBytes += agent.stats.logBytes;
+        return acc;
+    }, {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        estimatedCostUsd: 0,
+        runtimeMs: 0,
+        logBytes: 0
+    });
+    const activeAgents = decoratedAgents.filter((agent) => ["active", "collaborating", "waiting", "blocked"].includes(agent.status)).length;
+    const stoppedAgents = decoratedAgents.filter((agent) => agent.status === "stopped" || agent.status === "emergency-stopped").length;
+    const system = {
+        platform: os.platform(),
+        arch: os.arch(),
+        cpus: os.cpus().length,
+        loadAverage: os.loadavg(),
+        totalRamBytes: os.totalmem(),
+        freeRamBytes: os.freemem(),
+        usedRamBytes: os.totalmem() - os.freemem(),
+        processRamBytes: process.memoryUsage().rss,
+        uptimeSeconds: Math.round(os.uptime())
+    };
+    const categories = [
+        "coding",
+        "research",
+        "browsing",
+        "planning",
+        "writing",
+        "design",
+        "finance",
+        "operations",
+        "customer_support",
+        "file_management",
+        "memory_update",
+        "tool_execution",
+        "idle",
+        "blocked",
+        "error"
+    ];
+    return {
+        generatedAt,
+        workspaceId,
+        workspaceName,
+        protocolVersion: "agent-activity/v1",
+        orchestrator: {
+            agentId: "agent:theia-orchestrator",
+            name: "Theia Orchestrator",
+            status: agentRegistry.get("agent:theia-orchestrator")?.status ?? "active",
+            soulSummary: agentRegistry.get("agent:theia-orchestrator")?.soulSummary,
+            memorySummary: agentRegistry.get("agent:theia-orchestrator")?.memorySummary,
+            telemetryEndpoint: `${localCoreBaseUrl}/agent-network/telemetry/events`,
+            streamEndpoint: `${localCoreBaseUrl}/agent-network/stream`,
+            categories,
+            customCategoryPattern: "^[a-z][a-z0-9_]{2,31}$"
+        },
+        stats: {
+            activeAgents,
+            totalAgents: decoratedAgents.length,
+            stoppedAgents,
+            activeLinks: activeLinks.filter((link) => link.status === "active").length,
+            blockedLinks: activeLinks.filter((link) => link.status === "blocked" || link.status === "broken").length,
+            recentEvents: events.length,
+            tokens: totals,
+            estimatedSpendUsd: Number(totals.estimatedCostUsd.toFixed(4)),
+            runtimeMs: totals.runtimeMs,
+            logBytes: totals.logBytes,
+            system,
+            perAgent: decoratedAgents.map((agent) => ({
+                agentId: agent.agentId,
+                name: agent.name,
+                status: agent.status,
+                tokens: agent.stats.tokens.totalTokens,
+                estimatedCostUsd: agent.stats.estimatedCostUsd,
+                runtimeMs: agent.stats.runtimeMs,
+                cpuPercent: agent.stats.cpuPercent,
+                ramBytes: agent.stats.ramBytes,
+                activityScore: agent.activityScore
+            }))
+        },
+        agents: decoratedAgents,
+        links: activeLinks,
+        events: events.slice(0, 160).map(summarizeAgentEvent),
+        commands: agentControlCommands.slice(0, 80)
+    };
+}
+function serializeAgentRegistry() {
+    return [...agentRegistry.values()].map(decorateAgentProfile).sort((a, b) => {
+        if (a.agentId === "agent:theia-orchestrator")
+            return -1;
+        if (b.agentId === "agent:theia-orchestrator")
+            return 1;
+        return String(a.name).localeCompare(String(b.name));
+    });
+}
+function decorateAgentProfile(profile) {
+    const secret = agentSecrets.get(profile.agentId);
+    return {
+        ...profile,
+        hasTelemetryToken: Boolean(secret && !secret.revokedAt),
+        telemetryRevokedAt: secret?.revokedAt,
+        tokenCreatedAt: secret?.createdAt
+    };
+}
+function buildAgentStats(profile, events) {
+    return events.reduce((acc, event) => {
+        acc.eventCount += 1;
+        acc.tokens.inputTokens += event.usage.inputTokens ?? 0;
+        acc.tokens.outputTokens += event.usage.outputTokens ?? 0;
+        acc.tokens.totalTokens += event.usage.totalTokens ?? (event.usage.inputTokens ?? 0) + (event.usage.outputTokens ?? 0);
+        acc.estimatedCostUsd += event.usage.estimatedCostUsd ?? 0;
+        acc.runtimeMs += event.usage.runtimeMs ?? 0;
+        acc.logBytes += event.usage.logBytes ?? 0;
+        acc.cpuPercent = Math.max(acc.cpuPercent ?? 0, event.usage.cpuPercent ?? 0);
+        acc.ramBytes = Math.max(acc.ramBytes ?? 0, event.usage.ramBytes ?? 0);
+        acc.gpuPercent = Math.max(acc.gpuPercent ?? 0, event.usage.gpuPercent ?? 0);
+        acc.vramBytes = Math.max(acc.vramBytes ?? 0, event.usage.vramBytes ?? 0);
+        acc.memoryFiles = uniq([...acc.memoryFiles, ...(event.usage.memoryFiles ?? [])]);
+        acc.paidServices = uniq([...acc.paidServices, ...(event.usage.paidServices ?? [])]);
+        if (!acc.lastEventAt || new Date(event.timestamp).getTime() > new Date(acc.lastEventAt).getTime()) {
+            acc.lastEventAt = event.timestamp;
+        }
+        return acc;
+    }, {
+        eventCount: 0,
+        tokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        estimatedCostUsd: 0,
+        runtimeMs: 0,
+        cpuPercent: 0,
+        ramBytes: 0,
+        gpuPercent: 0,
+        vramBytes: 0,
+        memoryFiles: [],
+        paidServices: [],
+        logBytes: 0,
+        lastEventAt: profile.lastSeenAt
+    });
+}
+function summarizeAgentEvent(event) {
+    return {
+        eventId: event.eventId,
+        timestamp: event.timestamp,
+        sequence: event.sequence,
+        agentId: event.agent.agentId,
+        agentName: event.agent.name,
+        category: event.classification.category,
+        customCategory: event.classification.customCategory,
+        status: event.classification.status,
+        riskLevel: event.classification.riskLevel,
+        confidence: event.classification.confidence,
+        objective: event.what.objective,
+        currentTask: event.what.currentTask,
+        safeSummary: event.what.safeSummary,
+        decisionTrace: event.what.decisionTrace,
+        targets: event.where.targets,
+        toolCalls: event.how.toolCalls,
+        filesAccessed: event.how.filesAccessed,
+        websitesVisited: event.how.websitesVisited,
+        apiCalls: event.how.apiCalls,
+        collaborationLinkIds: event.how.collaborationLinkIds,
+        userVisibleExplanation: event.how.userVisibleExplanation,
+        usage: event.usage,
+        privacy: event.privacy
+    };
+}
+function computeAgentActivityScore(profile, events) {
+    const latest = events[0];
+    if (!latest) {
+        return profile.status === "active" ? 0.35 : 0.08;
+    }
+    const ageMinutes = Math.max(0, (Date.now() - new Date(latest.timestamp).getTime()) / 60000);
+    const recency = clamp(1 - ageMinutes / 90);
+    const eventPressure = clamp(events.filter((event) => Date.now() - new Date(event.timestamp).getTime() <= 60 * 60 * 1000).length / 28);
+    const tokenPressure = clamp(events.reduce((sum, event) => sum + (event.usage.totalTokens ?? 0), 0) / 250000);
+    const statusBoost = ["active", "collaborating", "waiting", "blocked"].includes(profile.status) ? 0.22 : 0;
+    return clamp(recency * 0.4 + eventPressure * 0.25 + tokenPressure * 0.2 + statusBoost);
+}
+function bubbleState(profile, latest, stats) {
+    if (profile.status === "emergency-stopped")
+        return "emergency-stopped";
+    if (profile.status === "stopped" || profile.status === "disconnected")
+        return "stopped";
+    if (latest?.classification.riskLevel === "critical" || latest?.classification.riskLevel === "high")
+        return "warning";
+    if (stats.estimatedCostUsd >= 5)
+        return "high-cost";
+    if (profile.status === "blocked" || latest?.classification.status === "blocked")
+        return "blocked";
+    if (profile.status === "collaborating")
+        return "collaborating";
+    if (profile.status === "active")
+        return "active";
+    return "idle";
+}
+function networkPosition(index, count) {
+    if (index === 0) {
+        return { x: 50, y: 50 };
+    }
+    const ring = count <= 6 ? 34 : index % 2 === 0 ? 38 : 26;
+    const angle = ((index - 1) / Math.max(1, count - 1)) * Math.PI * 2 - Math.PI / 2;
+    return {
+        x: Math.round(50 + Math.cos(angle) * ring),
+        y: Math.round(50 + Math.sin(angle) * ring)
+    };
+}
+function makeAgentCollaborationLink(input, operator) {
+    const sourceAgentId = text(input.sourceAgentId) ?? text(input.agentAId) ?? stringList(input.agentIds)[0];
+    const targetAgentId = text(input.targetAgentId) ?? text(input.agentBId) ?? stringList(input.agentIds)[1];
+    if (!sourceAgentId || !targetAgentId || sourceAgentId === targetAgentId) {
+        throw new Error("Two different agent IDs are required to make a collaboration link.");
+    }
+    const source = agentRegistry.get(sourceAgentId);
+    const target = agentRegistry.get(targetAgentId);
+    if (!source || !target) {
+        throw new Error("Both agents must be registered before linking.");
+    }
+    if (!source.canCollaborate || !target.canCollaborate) {
+        throw new Error("Both agents must allow collaboration before a link can be made.");
+    }
+    const taskScope = text(input.taskScope) ?? text(input.scope) ?? text(input.instruction);
+    if (!taskScope) {
+        throw new Error("A task scope is required for collaboration links.");
+    }
+    const now = new Date().toISOString();
+    const link = collaborationLinkSchema.parse({
+        linkId: text(input.linkId) ?? `link:${randomUUID()}`,
+        sourceAgentId,
+        targetAgentId,
+        status: "active",
+        taskScope,
+        permissions: stringList(input.permissions).slice(0, 12),
+        priority: ["low", "normal", "high"].includes(text(input.priority)) ? text(input.priority) : "normal",
+        createdBy: operator.actorId,
+        createdAt: now,
+        updatedAt: now,
+        expiresAt: text(input.expiresAt),
+        lastActivityAt: undefined
+    });
+    collaborationLinks.set(link.linkId, link);
+    agentRegistry.set(source.agentId, { ...source, status: "collaborating", updatedAt: now });
+    agentRegistry.set(target.agentId, { ...target, status: "collaborating", updatedAt: now });
+    const command = createAgentControlAuditCommand({
+        action: "make_link",
+        actorId: operator.actorId,
+        agentIds: [sourceAgentId, targetAgentId],
+        linkIds: [link.linkId],
+        reason: taskScope,
+        instruction: text(input.instruction),
+        highRisk: toBool(input.highRisk) ?? false,
+        resultSummary: "Collaboration link created with explicit task scope and permissions.",
+        affectedResources: [`link:${link.linkId}`]
+    });
+    agentControlCommands.unshift(command);
+    trimAgentControlCommands();
+    core.addOperationalAudit("agent_network.link.make", operator.actorId, link.linkId, {
+        sourceAgentId,
+        targetAgentId,
+        taskScope,
+        permissions: link.permissions,
+        priority: link.priority
+    });
+    return link;
+}
+async function executeAgentControlCommand(input, operator) {
+    const action = normalizeAgentControlAction(input.action);
+    if (!action) {
+        throw new Error("Control action is required.");
+    }
+    const agentIds = stringList(input.agentIds ?? input.agents ?? input.agentId).filter((agentId) => agentRegistry.has(agentId));
+    const linkIds = stringList(input.linkIds ?? input.linkId).filter((linkId) => collaborationLinks.has(linkId));
+    const highRisk = toBool(input.highRisk) ?? ["emergency_stop", "make_link", "focus_together"].includes(action);
+    const confirmed = toBool(input.confirmed) ?? false;
+    if (highRisk && !confirmed) {
+        throw new Error("This high-risk control requires explicit confirmation.");
+    }
+    const now = new Date().toISOString();
+    let status = "completed";
+    let resultSummary = "Command accepted.";
+    const affectedResources = [];
+    if (action === "query") {
+        const summaries = agentIds.map((agentId) => {
+            const latest = agentActivityEvents.find((event) => event.agent.agentId === agentId);
+            const profile = agentRegistry.get(agentId);
+            return `${profile?.name ?? agentId}: ${latest?.how.userVisibleExplanation ?? latest?.what.safeSummary ?? "No recent activity report is available."}`;
+        });
+        resultSummary = summaries.join(" ");
+    }
+    else if (action === "emergency_stop") {
+        if (agentIds.length === 0) {
+            throw new Error("At least one registered agent is required for emergency stop.");
+        }
+        const denied = agentIds.filter((agentId) => !canControlAgent(agentRegistry.get(agentId), "emergency_stop"));
+        if (denied.length > 0) {
+            throw new Error(`Agent control level does not allow emergency stop: ${denied.join(", ")}`);
+        }
+        const openClawAgents = agentIds.map((agentId) => agentRegistry.get(agentId)).filter((profile) => profile?.connectionKind === "openclaw");
+        let gatewayResult;
+        if (openClawAgents.length > 0) {
+            gatewayResult = await executeGatewayControl("stop");
+            if (gatewayResult.ok || gatewayResult.alreadyInDesiredState) {
+                runtime.enabled = false;
+                runtime.lastError = "Stopped by agent-network emergency stop.";
+                pluginEnabled["openclaw-main"] = false;
+                emergencyState.status = "stopped";
+                emergencyState.isStopped = true;
+                emergencyState.restartAvailable = true;
+                emergencyState.triggeredBy = operator.actorId;
+                emergencyState.reason = text(input.reason) ?? "Agent emergency stop.";
+                emergencyState.lastUpdatedAt = now;
+                emergencyState.lastResult = gatewayResult.summary;
+                await rebuildCore();
+            }
+            else {
+                status = "failed";
+                resultSummary = gatewayResult.error ?? "OpenClaw gateway stop failed.";
+            }
+        }
+        for (const agentId of agentIds) {
+            const profile = agentRegistry.get(agentId);
+            if (!profile)
+                continue;
+            agentRegistry.set(agentId, {
+                ...profile,
+                status: "emergency-stopped",
+                updatedAt: now,
+                emergencyStoppedAt: now,
+                emergencyStoppedBy: operator.actorId
+            });
+            const secret = agentSecrets.get(agentId);
+            if (secret) {
+                agentSecrets.set(agentId, {
+                    ...secret,
+                    revokedAt: now,
+                    revokedBy: operator.actorId
+                });
+            }
+            affectedResources.push(`agent:${agentId}`);
+            for (const link of collaborationLinks.values()) {
+                if (link.sourceAgentId === agentId || link.targetAgentId === agentId) {
+                    collaborationLinks.set(link.linkId, {
+                        ...link,
+                        status: "blocked",
+                        updatedAt: now
+                    });
+                    affectedResources.push(`link:${link.linkId}`);
+                }
+            }
+        }
+        if (status !== "failed") {
+            resultSummary = openClawAgents.length > 0
+                ? `Emergency stop applied. ${gatewayResult?.summary ?? "OpenClaw gateway stop command completed."}`
+                : "Emergency stop applied as a local control lock. Adapter-level hard stop is not available for this agent type.";
+        }
+        await appendEmergencyAuditEntry({
+            actorId: operator.actorId,
+            action: "agent_network.emergency_stop",
+            status: status === "failed" ? "failed" : "success",
+            reason: text(input.reason) ?? "Agent emergency stop.",
+            result: resultSummary,
+            affectedServices: affectedResources
+        });
+        await notifyOpsEmail(operator.actorId, status === "failed" ? "[Theia] Agent emergency stop failed" : "[Theia] Agent emergency stop completed", [
+            `Actor: ${operator.actorId}`,
+            `Workspace: ${workspaceName} (${workspaceId})`,
+            `Agents: ${agentIds.join(", ")}`,
+            `Reason: ${text(input.reason) ?? "Agent emergency stop."}`,
+            `Result: ${resultSummary}`,
+            `Timestamp: ${now}`
+        ], {
+            includeAdminCopy: true
+        });
+    }
+    else if (action === "steer") {
+        if (agentIds.length === 0) {
+            throw new Error("At least one registered agent is required for steering.");
+        }
+        const denied = agentIds.filter((agentId) => !canControlAgent(agentRegistry.get(agentId), "steer"));
+        if (denied.length > 0) {
+            throw new Error(`Agent control level does not allow steering: ${denied.join(", ")}`);
+        }
+        resultSummary = "Steering instruction recorded and visible. No shell command was executed.";
+        for (const agentId of agentIds) {
+            const profile = agentRegistry.get(agentId);
+            if (profile) {
+                agentRegistry.set(agentId, { ...profile, updatedAt: now, lastSteeringInstruction: text(input.instruction) });
+                affectedResources.push(`agent:${agentId}`);
+            }
+        }
+    }
+    else if (action === "pause" || action === "disconnect") {
+        for (const agentId of agentIds) {
+            const profile = agentRegistry.get(agentId);
+            if (!profile)
+                continue;
+            agentRegistry.set(agentId, {
+                ...profile,
+                status: action === "pause" ? "stopped" : "disconnected",
+                updatedAt: now
+            });
+            if (action === "disconnect") {
+                const secret = agentSecrets.get(agentId);
+                if (secret) {
+                    agentSecrets.set(agentId, { ...secret, revokedAt: now, revokedBy: operator.actorId });
+                }
+            }
+            affectedResources.push(`agent:${agentId}`);
+        }
+        resultSummary = action === "pause" ? "Agent paused locally." : "Agent disconnected and telemetry token revoked.";
+    }
+    else if (action === "resume") {
+        for (const agentId of agentIds) {
+            const profile = agentRegistry.get(agentId);
+            if (!profile)
+                continue;
+            if (profile.status === "emergency-stopped" && !confirmed) {
+                throw new Error("Resuming an emergency-stopped agent requires confirmation.");
+            }
+            agentRegistry.set(agentId, {
+                ...profile,
+                status: "idle",
+                updatedAt: now,
+                emergencyStoppedAt: undefined,
+                emergencyStoppedBy: undefined
+            });
+            affectedResources.push(`agent:${agentId}`);
+        }
+        resultSummary = "Agent local control lock cleared. Rotate telemetry token if it was revoked.";
+    }
+    else if (action === "break_link") {
+        for (const linkId of linkIds) {
+            const link = collaborationLinks.get(linkId);
+            if (!link)
+                continue;
+            collaborationLinks.set(linkId, { ...link, status: "broken", updatedAt: now });
+            affectedResources.push(`link:${linkId}`);
+        }
+        resultSummary = "Collaboration link broken.";
+    }
+    else if (action === "make_link") {
+        const link = makeAgentCollaborationLink({
+            ...input,
+            sourceAgentId: input.sourceAgentId ?? agentIds[0],
+            targetAgentId: input.targetAgentId ?? agentIds[1],
+            taskScope: input.taskScope ?? input.instruction
+        }, operator);
+        linkIds.push(link.linkId);
+        affectedResources.push(`link:${link.linkId}`);
+        resultSummary = "Collaboration link created.";
+    }
+    else if (action === "focus_together") {
+        if (agentIds.length < 2) {
+            throw new Error("Focus Together requires at least two agents.");
+        }
+        const scope = text(input.taskScope) ?? text(input.instruction) ?? "Shared operator-prioritized task.";
+        for (let i = 0; i < agentIds.length - 1; i += 1) {
+            const link = makeAgentCollaborationLink({
+                sourceAgentId: agentIds[i],
+                targetAgentId: agentIds[i + 1],
+                taskScope: scope,
+                permissions: ["shared_task_context", "status_reports_only"],
+                priority: "high"
+            }, operator);
+            linkIds.push(link.linkId);
+            affectedResources.push(`link:${link.linkId}`);
+        }
+        resultSummary = "Selected agents are focused on the shared task with high-priority explicit links.";
+    }
+    const command = createAgentControlAuditCommand({
+        action,
+        status,
+        actorId: operator.actorId,
+        agentIds,
+        linkIds,
+        reason: text(input.reason),
+        instruction: text(input.instruction),
+        highRisk,
+        requiresConfirmation: highRisk,
+        resultSummary,
+        affectedResources
+    });
+    agentControlCommands.unshift(command);
+    trimAgentControlCommands();
+    core.addOperationalAudit(`agent_network.control.${action}`, operator.actorId, command.commandId, {
+        agentIds,
+        linkIds,
+        status,
+        reason: command.reason,
+        affectedResources
+    });
+    return {
+        command,
+        snapshot: buildAgentNetworkSnapshot(),
+        operator
+    };
+}
+function createAgentControlAuditCommand(input) {
+    const now = new Date().toISOString();
+    return agentControlCommandSchema.parse({
+        commandId: text(input.commandId) ?? `cmd:${randomUUID()}`,
+        action: input.action,
+        status: input.status ?? "completed",
+        actorId: input.actorId,
+        agentIds: stringList(input.agentIds),
+        linkIds: stringList(input.linkIds),
+        reason: text(input.reason),
+        instruction: text(input.instruction),
+        highRisk: toBool(input.highRisk) ?? false,
+        requiresConfirmation: toBool(input.requiresConfirmation) ?? false,
+        createdAt: text(input.createdAt) ?? now,
+        updatedAt: now,
+        resultSummary: text(input.resultSummary),
+        affectedResources: stringList(input.affectedResources),
+        auditId: text(input.auditId)
+    });
+}
+function trimAgentControlCommands() {
+    if (agentControlCommands.length > 600) {
+        agentControlCommands.length = 600;
+    }
+}
+function canControlAgent(profile, action) {
+    if (!profile)
+        return false;
+    if (profile.system && action === "emergency_stop")
+        return false;
+    const level = profile.controlLevel;
+    if (level === "full")
+        return true;
+    if (action === "query")
+        return ["query", "pause_resume", "steer", "stop"].includes(level);
+    if (action === "steer")
+        return level === "steer" || level === "stop";
+    if (action === "emergency_stop")
+        return profile.canEmergencyStop && level === "stop";
+    if (action === "pause" || action === "resume")
+        return ["pause_resume", "steer", "stop"].includes(level);
+    return false;
+}
+async function discoverAgentCandidates(workspacePath) {
+    const discoveryRoots = await resolveAgentDiscoveryRoots(workspacePath);
+    const discovered = await discoverAcrossRoots(discoveryRoots);
+    const hasKnownOpenClawInstall = discoveryRoots.some((root) => root === defaultOpenClawInstallPath);
+    const autoRegisterable = [];
+    const manual = [];
+    const now = new Date().toISOString();
+    if (discovered.openClawLogPaths.length > 0 || sources.openClawSources.length > 0 || hasKnownOpenClawInstall) {
+        autoRegisterable.push({
+            agentId: "agent:openclaw",
+            name: "OpenClaw",
+            role: "OpenClaw Agent Network",
+            domain: "openclaw",
+            model: "mixed",
+            vendor: "OpenClaw",
+            connectionKind: "openclaw",
+            status: emergencyState.isStopped ? "emergency-stopped" : "idle",
+            endpointLabel: runtime.endpoint ?? runtime.cliCommand,
+            tools: ["sessions", "gateway", "hooks"],
+            skills: ["agent orchestration", "terminal workflows"],
+            connectors: ["openclaw-main", "openclaw-telemetry"],
+            memorySummary: hasKnownOpenClawInstall
+                ? `Linked to OpenClaw install at ${defaultOpenClawInstallPath}.`
+                : "Discovered from OpenClaw session/log paths.",
+            soulSummary: "Reports through OpenClaw logs, pairing hooks, or gateway telemetry.",
+            controlLevel: "stop",
+            canCollaborate: true,
+            canEmergencyStop: true,
+            trustLevel: "trusted",
+            registeredAt: now,
+            updatedAt: now
+        });
+    }
+    if (discovered.memoryPath || discovered.bootstrapPath) {
+        manual.push({
+            kind: "local_config",
+            title: "Workspace memory agent",
+            suggestedName: "Workspace Memory Agent",
+            connectionKind: "local",
+            domain: "memory",
+            confidence: 0.76,
+            paths: [discovered.memoryPath, discovered.bootstrapPath].filter(Boolean),
+            requiredQuestions: manualAgentQuestions()
+        });
+    }
+    const configHints = (await Promise.all(discoveryRoots.map((root) => discoverAgentConfigHints(root)))).flat();
+    manual.push(...configHints.map((hint) => ({
+        ...hint,
+        requiredQuestions: manualAgentQuestions()
+    })));
+    const processes = await discoverAgentProcesses();
+    manual.push(...processes.map((processInfo) => ({
+        kind: "running_process",
+        title: `${processInfo.name} process`,
+        suggestedName: processInfo.name,
+        connectionKind: "terminal",
+        domain: "operations",
+        confidence: 0.52,
+        process: processInfo,
+        requiredQuestions: manualAgentQuestions()
+    })));
+    return {
+        autoRegisterable,
+        manual
+    };
+}
+async function resolveAgentDiscoveryRoots(workspacePath) {
+    const roots = uniq([workspacePath, ...openClawDiscoveryPaths].map((entry) => path.resolve(entry)));
+    const existing = [];
+    for (const root of roots) {
+        if (!isApproved(root))
+            continue;
+        if (await isDir(root))
+            existing.push(root);
+    }
+    return existing.length > 0 ? existing : [path.resolve(workspacePath)];
+}
+async function discoverAcrossRoots(roots) {
+    const merged = {
+        memoryPath: undefined,
+        bootstrapPath: undefined,
+        codexLogPaths: [],
+        customJsonLogPaths: [],
+        openClawLogPaths: []
+    };
+    for (const root of roots) {
+        const discovered = await discover(root);
+        merged.memoryPath ??= discovered.memoryPath;
+        merged.bootstrapPath ??= discovered.bootstrapPath;
+        merged.codexLogPaths.push(...discovered.codexLogPaths);
+        merged.customJsonLogPaths.push(...discovered.customJsonLogPaths);
+        merged.openClawLogPaths.push(...discovered.openClawLogPaths);
+    }
+    return {
+        memoryPath: merged.memoryPath,
+        bootstrapPath: merged.bootstrapPath,
+        codexLogPaths: uniq(merged.codexLogPaths).slice(0, 24),
+        customJsonLogPaths: uniq(merged.customJsonLogPaths).slice(0, 24),
+        openClawLogPaths: uniq(merged.openClawLogPaths).slice(0, 24)
+    };
+}
+function manualAgentQuestions() {
+    return [
+        "What is this agent called?",
+        "What model/vendor does it use?",
+        "Is it local, API-based, OAuth-based, terminal-driven, or OpenClaw-based?",
+        "What tools, skills, or connectors can it access?",
+        "What domain does it belong to?",
+        "What level of control should the dashboard have?",
+        "Can this agent collaborate with other agents?",
+        "Can this agent be emergency-stopped?"
+    ];
+}
+async function discoverAgentConfigHints(workspacePath) {
+    const hints = [];
+    const queue = [{ dir: workspacePath, depth: 0 }];
+    const ignored = new Set([".git", "node_modules", "dist", "build", ".next", ".cache", ".idea", ".vscode", "coverage"]);
+    let scanned = 0;
+    while (queue.length > 0 && scanned < 1200 && hints.length < 30) {
+        const current = queue.shift();
+        if (!current)
+            break;
+        scanned += 1;
+        let entries;
+        try {
+            entries = await readdir(current.dir, { withFileTypes: true, encoding: "utf8" });
+        }
+        catch {
+            continue;
+        }
+        for (const entry of entries) {
+            const absolute = path.join(current.dir, entry.name);
+            const lower = entry.name.toLowerCase();
+            if (entry.isDirectory()) {
+                if (current.depth < 4 && !ignored.has(lower))
+                    queue.push({ dir: absolute, depth: current.depth + 1 });
+                continue;
+            }
+            if (!entry.isFile())
+                continue;
+            if (["soul.md", "memory.md", "agent.json", "agents.json", "theia-agent.json"].includes(lower) || lower.endsWith(".agent.json")) {
+                hints.push({
+                    kind: "agent_config",
+                    title: entry.name,
+                    suggestedName: heading(path.basename(entry.name, path.extname(entry.name))),
+                    connectionKind: lower.includes("openclaw") ? "openclaw" : "local",
+                    domain: lower.includes("memory") ? "memory" : "general",
+                    confidence: lower === "soul.md" || lower === "theia-agent.json" ? 0.82 : 0.65,
+                    paths: [absolute]
+                });
+            }
+        }
+    }
+    return hints;
+}
+async function discoverAgentProcesses() {
+    if (process.platform !== "win32") {
+        return [];
+    }
+    try {
+        const command = "Get-Process | Where-Object { $_.ProcessName -match 'openclaw|codex|node|python' } | Select-Object -First 24 ProcessName,Id,Path | ConvertTo-Json -Compress";
+        const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-Command", command], {
+            timeout: 4000,
+            windowsHide: true,
+            maxBuffer: 1024 * 1024
+        });
+        const parsed = safeJsonParse(stdout);
+        const rows = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
+        return rows.map((row) => ({
+            name: text(row.ProcessName) ?? "process",
+            pid: num(row.Id),
+            path: text(row.Path)
+        })).filter((row) => row.name);
+    }
+    catch {
+        return [];
+    }
+}
+function broadcastAgentSse(payload) {
+    for (const subscriber of agentSseSubscribers) {
+        try {
+            subscriber(payload);
+        }
+        catch {
+            // no-op
+        }
+    }
+}
+function cacheAgentEventKey(key) {
+    agentEventDedupe.set(key, Date.now());
+    if (agentEventDedupe.size <= 2000) {
+        return;
+    }
+    const oldest = [...agentEventDedupe.entries()].sort((a, b) => a[1] - b[1]).slice(0, 500);
+    for (const [staleKey] of oldest) {
+        agentEventDedupe.delete(staleKey);
+    }
+}
+function createAgentTelemetryToken() {
+    return `theia_agent_${randomBytes(24).toString("base64url")}`;
+}
+function sha256(value) {
+    return createHash("sha256").update(String(value)).digest("hex");
+}
+function slugifyAgentName(value) {
+    return (value ?? "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "agent";
+}
+function stringList(value) {
+    if (Array.isArray(value)) {
+        return uniq(value.map((item) => text(String(item))).filter(Boolean));
+    }
+    const single = text(value);
+    if (!single) {
+        return [];
+    }
+    return uniq(single.split(",").map((item) => item.trim()).filter(Boolean));
+}
+function normalizeAgentConnectionKind(value) {
+    const normalized = text(value)?.toLowerCase().replace(/[-\s]+/g, "_");
+    if (["local", "api", "oauth", "openclaw", "terminal", "custom"].includes(normalized)) {
+        return normalized;
+    }
+    if (normalized === "oauth_based")
+        return "oauth";
+    if (normalized === "api_based")
+        return "api";
+    return "local";
+}
+function normalizeAgentStatus(value) {
+    const normalized = text(value)?.toLowerCase();
+    if (["active", "idle", "waiting", "blocked", "collaborating", "stopped", "emergency-stopped", "disconnected", "failed"].includes(normalized)) {
+        return normalized;
+    }
+    return undefined;
+}
+function normalizeControlLevel(value) {
+    const normalized = text(value)?.toLowerCase().replace(/[-\s]+/g, "_");
+    if (["observe_only", "query", "pause_resume", "steer", "stop", "full"].includes(normalized)) {
+        return normalized;
+    }
+    return undefined;
+}
+function normalizeTrustLevel(value) {
+    const normalized = text(value)?.toLowerCase();
+    if (["low", "standard", "trusted", "restricted"].includes(normalized)) {
+        return normalized;
+    }
+    return undefined;
+}
+function normalizeAgentControlAction(value) {
+    const normalized = text(value)?.toLowerCase().replace(/[-\s]+/g, "_");
+    if (["query", "emergency_stop", "steer", "pause", "resume", "disconnect", "make_link", "break_link", "focus_together"].includes(normalized)) {
+        return normalized;
+    }
+    return undefined;
+}
+function redactSensitive(value) {
+    if (typeof value === "string") {
+        return value
+            .replace(/(sk-[a-zA-Z0-9_-]{8,})/g, "[redacted-key]")
+            .replace(/(theia_agent_[a-zA-Z0-9_-]+)/g, "[redacted-agent-token]")
+            .replace(/(Bearer\s+)[a-zA-Z0-9._~+/=-]{10,}/gi, "$1[redacted-token]")
+            .replace(/([?&](?:token|key|secret|password)=)[^&\s]+/gi, "$1[redacted]");
+    }
+    if (Array.isArray(value)) {
+        return value.map((item) => redactSensitive(item));
+    }
+    if (value && typeof value === "object") {
+        const next = {};
+        for (const [key, item] of Object.entries(value)) {
+            if (/token|secret|password|apiKey|authorization/i.test(key)) {
+                next[key] = "[redacted]";
+            }
+            else {
+                next[key] = redactSensitive(item);
+            }
+        }
+        return next;
+    }
+    return value;
 }
 async function executeGatewayControl(action) {
     const args = action === "stop" ? ["gateway", "stop"] : ["gateway", "start"];
@@ -2285,6 +3726,63 @@ async function hydrateFromStateFile() {
         if (parsed.openClawTelemetry && typeof parsed.openClawTelemetry === "object") {
             openClawTelemetry.restoreState(parsed.openClawTelemetry);
         }
+        if (parsed.agentNetwork && typeof parsed.agentNetwork === "object") {
+            if (Array.isArray(parsed.agentNetwork.agents)) {
+                agentRegistry.clear();
+                for (const rawProfile of parsed.agentNetwork.agents) {
+                    const parsedProfile = agentProfileSchema.safeParse(rawProfile);
+                    if (parsedProfile.success) {
+                        agentRegistry.set(parsedProfile.data.agentId, {
+                            ...rawProfile,
+                            ...parsedProfile.data
+                        });
+                    }
+                }
+            }
+            if (Array.isArray(parsed.agentNetwork.agentSecrets)) {
+                agentSecrets.clear();
+                for (const item of parsed.agentNetwork.agentSecrets) {
+                    const agentId = text(item?.agentId);
+                    const tokenHash = text(item?.tokenHash);
+                    if (agentId && tokenHash) {
+                        agentSecrets.set(agentId, {
+                            tokenHash,
+                            createdAt: text(item?.createdAt) ?? new Date().toISOString(),
+                            createdBy: text(item?.createdBy) ?? "system:restore",
+                            revokedAt: text(item?.revokedAt),
+                            revokedBy: text(item?.revokedBy)
+                        });
+                    }
+                }
+            }
+            if (Array.isArray(parsed.agentNetwork.events)) {
+                agentActivityEvents.length = 0;
+                for (const rawEvent of parsed.agentNetwork.events.slice(0, agentNetworkMaxEvents)) {
+                    const parsedEvent = agentActivityEventSchema.safeParse(rawEvent);
+                    if (parsedEvent.success) {
+                        agentActivityEvents.push(parsedEvent.data);
+                    }
+                }
+            }
+            if (Array.isArray(parsed.agentNetwork.links)) {
+                collaborationLinks.clear();
+                for (const rawLink of parsed.agentNetwork.links) {
+                    const parsedLink = collaborationLinkSchema.safeParse(rawLink);
+                    if (parsedLink.success) {
+                        collaborationLinks.set(parsedLink.data.linkId, parsedLink.data);
+                    }
+                }
+            }
+            if (Array.isArray(parsed.agentNetwork.commands)) {
+                agentControlCommands.length = 0;
+                for (const rawCommand of parsed.agentNetwork.commands.slice(0, 600)) {
+                    const parsedCommand = agentControlCommandSchema.safeParse(rawCommand);
+                    if (parsedCommand.success) {
+                        agentControlCommands.push(parsedCommand.data);
+                    }
+                }
+            }
+        }
         setup.runtime = runtimeView();
     }
     catch {
@@ -2292,7 +3790,7 @@ async function hydrateFromStateFile() {
 }
 function statePayload(reason) {
     return {
-        version: 6,
+        version: 7,
         reason,
         updatedAt: new Date().toISOString(),
         workspaceId,
@@ -2332,7 +3830,17 @@ function statePayload(reason) {
         },
         alertOverrides: Object.fromEntries(alertOverrides.entries()),
         highRiskNotifications: highRiskEngine.exportState(),
-        openClawTelemetry: openClawTelemetry.exportState()
+        openClawTelemetry: openClawTelemetry.exportState(),
+        agentNetwork: {
+            agents: serializeAgentRegistry(),
+            agentSecrets: [...agentSecrets.entries()].map(([agentId, secret]) => ({
+                agentId,
+                ...secret
+            })),
+            events: agentActivityEvents.slice(0, agentNetworkMaxEvents),
+            links: [...collaborationLinks.values()],
+            commands: agentControlCommands.slice(0, 600)
+        }
     };
 }
 async function persistState(reason) {
