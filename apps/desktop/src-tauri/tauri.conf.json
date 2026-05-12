@@ -18,12 +18,13 @@
         "minWidth": 1080,
         "minHeight": 700,
         "center": true,
+        "theme": "Dark",
         "resizable": true,
         "fullscreen": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:4318 http://127.0.0.1:4318 ws://localhost:4318 ws://127.0.0.1:4318; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; script-src 'self'"
     }
   },
   "bundle": {

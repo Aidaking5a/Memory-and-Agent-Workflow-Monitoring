@@ -1,6 +1,8 @@
 import { emptyDashboardData } from "./mock-data";
 import type {
   AuthSessionPayload,
+  AgentNetworkControlAction,
+  AgentNetworkSnapshot,
   DashboardData,
   OpenClawPairingCommands,
   OpenClawPairingView,
@@ -102,7 +104,7 @@ function isAuthStatus(status: number): boolean {
 }
 
 async function getJson<TResponse>(path: string): Promise<TResponse> {
-  const response = await fetch(`${coreBaseUrl()}${path}`, {
+  const response = await fetchCore(path, {
     headers: operatorHeaders()
   });
   if (isAuthStatus(response.status)) {
@@ -127,7 +129,7 @@ async function readErrorMessage(response: Response): Promise<string> {
 }
 
 async function postJson<TResponse>(path: string, body: Record<string, unknown>): Promise<TResponse> {
-  const response = await fetch(`${coreBaseUrl()}${path}`, {
+  const response = await fetchCore(path, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -147,7 +149,7 @@ async function postJson<TResponse>(path: string, body: Record<string, unknown>):
 }
 
 async function putJson<TResponse>(path: string, body: Record<string, unknown>): Promise<TResponse> {
-  const response = await fetch(`${coreBaseUrl()}${path}`, {
+  const response = await fetchCore(path, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -166,11 +168,27 @@ async function putJson<TResponse>(path: string, body: Record<string, unknown>): 
   return (await response.json()) as TResponse;
 }
 
+async function fetchCore(path: string, init: RequestInit): Promise<Response> {
+  const url = `${coreBaseUrl()}${path}`;
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    throw new Error(connectionFailureMessage(error));
+  }
+}
+
+function connectionFailureMessage(error: unknown): string {
+  const baseUrl = coreBaseUrl();
+  const detail = error instanceof Error && error.message.trim().length > 0 ? ` Browser detail: ${error.message}` : "";
+  return `Unable to reach Theia local core at ${baseUrl}. Start it with \`cmd /d /c scripts\\start-theia-dashboard.cmd -OpenClawPath "%USERPROFILE%\\src\\openclaw"\` and make sure THEIA_ALLOWED_ORIGINS includes this dashboard URL.${detail}`;
+}
+
 export async function loadDashboardData(): Promise<DashboardData> {
   try {
     const payload = await getJson<Partial<DashboardData>>("/dashboard/snapshot");
     const connection = (payload.connection ?? {}) as Partial<DashboardData["connection"]>;
     const openClawLive = (payload.openClawLive ?? {}) as Partial<DashboardData["openClawLive"]>;
+    const agentNetwork = (payload.agentNetwork ?? {}) as Partial<DashboardData["agentNetwork"]>;
     return {
       ...emptyDashboardData,
       ...payload,
@@ -214,6 +232,31 @@ export async function loadDashboardData(): Promise<DashboardData> {
           ...(openClawLive.telemetry ?? {})
         }
       },
+      agentNetwork: {
+        ...emptyDashboardData.agentNetwork,
+        ...agentNetwork,
+        orchestrator: {
+          ...emptyDashboardData.agentNetwork.orchestrator,
+          ...(agentNetwork.orchestrator ?? {})
+        },
+        stats: {
+          ...emptyDashboardData.agentNetwork.stats,
+          ...(agentNetwork.stats ?? {}),
+          tokens: {
+            ...emptyDashboardData.agentNetwork.stats.tokens,
+            ...(agentNetwork.stats?.tokens ?? {})
+          },
+          system: {
+            ...emptyDashboardData.agentNetwork.stats.system,
+            ...(agentNetwork.stats?.system ?? {})
+          },
+          perAgent: agentNetwork.stats?.perAgent ?? emptyDashboardData.agentNetwork.stats.perAgent
+        },
+        agents: agentNetwork.agents ?? emptyDashboardData.agentNetwork.agents,
+        links: agentNetwork.links ?? emptyDashboardData.agentNetwork.links,
+        events: agentNetwork.events ?? emptyDashboardData.agentNetwork.events,
+        commands: agentNetwork.commands ?? emptyDashboardData.agentNetwork.commands
+      },
       operator: { ...emptyDashboardData.operator, ...(payload.operator ?? {}) },
       notificationCenter: payload.notificationCenter ?? emptyDashboardData.notificationCenter
     };
@@ -239,6 +282,99 @@ export async function loadDashboardData(): Promise<DashboardData> {
       }
     };
   }
+}
+
+export async function loadAgentNetworkSnapshot(): Promise<AgentNetworkSnapshot> {
+  const payload = await getJson<Partial<AgentNetworkSnapshot>>("/agent-network/snapshot");
+  return {
+    ...emptyDashboardData.agentNetwork,
+    ...payload,
+    orchestrator: {
+      ...emptyDashboardData.agentNetwork.orchestrator,
+      ...(payload.orchestrator ?? {})
+    },
+    stats: {
+      ...emptyDashboardData.agentNetwork.stats,
+      ...(payload.stats ?? {}),
+      tokens: {
+        ...emptyDashboardData.agentNetwork.stats.tokens,
+        ...(payload.stats?.tokens ?? {})
+      },
+      system: {
+        ...emptyDashboardData.agentNetwork.stats.system,
+        ...(payload.stats?.system ?? {})
+      },
+      perAgent: payload.stats?.perAgent ?? emptyDashboardData.agentNetwork.stats.perAgent
+    },
+    agents: payload.agents ?? [],
+    links: payload.links ?? [],
+    events: payload.events ?? [],
+    commands: payload.commands ?? []
+  };
+}
+
+export async function registerPrivateAgent(input: Record<string, unknown>): Promise<{
+  agent: AgentNetworkSnapshot["agents"][number];
+  telemetryToken?: string;
+  telemetryEndpoint: string;
+  commands?: {
+    endpoint?: string;
+    note?: string;
+    powershell?: string[];
+    bash?: string[];
+  };
+}> {
+  return postJson("/agent-network/agents", input);
+}
+
+export async function discoverAgentNetwork(workspacePath?: string): Promise<{
+  generatedAt: string;
+  workspacePath: string;
+  registered: AgentNetworkSnapshot["agents"];
+  manual: Array<Record<string, unknown>>;
+}> {
+  return postJson("/agent-network/discover", workspacePath ? { workspacePath } : {});
+}
+
+export async function sendAgentControlCommand(input: {
+  action: AgentNetworkControlAction;
+  agentIds?: string[];
+  linkIds?: string[];
+  reason?: string;
+  instruction?: string;
+  taskScope?: string;
+  sourceAgentId?: string;
+  targetAgentId?: string;
+  permissions?: string[];
+  priority?: "low" | "normal" | "high";
+  highRisk?: boolean;
+  confirmed?: boolean;
+}): Promise<{
+  command: AgentNetworkSnapshot["commands"][number];
+  snapshot: AgentNetworkSnapshot;
+}> {
+  return postJson("/agent-network/control", input as Record<string, unknown>);
+}
+
+export async function makeAgentLink(input: {
+  sourceAgentId: string;
+  targetAgentId: string;
+  taskScope: string;
+  permissions?: string[];
+  priority?: "low" | "normal" | "high";
+  instruction?: string;
+  confirmed?: boolean;
+}): Promise<{
+  link: AgentNetworkSnapshot["links"][number];
+}> {
+  return postJson("/agent-network/links", input as Record<string, unknown>);
+}
+
+export async function breakAgentLink(linkId: string, reason?: string): Promise<{
+  link: AgentNetworkSnapshot["links"][number];
+  command: AgentNetworkSnapshot["commands"][number];
+}> {
+  return postJson(`/agent-network/links/${encodeURIComponent(linkId)}/break`, { reason });
 }
 
 export async function discoverOpenClawWorkspace(workspacePath: string): Promise<SetupState["discoveredSources"]> {
@@ -484,7 +620,7 @@ export function subscribeOpenClawTelemetryStream(handlers: {
 
   const run = async () => {
     try {
-      const response = await fetch(`${coreBaseUrl()}/openclaw/telemetry/stream`, {
+      const response = await fetchCore("/openclaw/telemetry/stream", {
         headers: {
           Accept: "text/event-stream",
           ...operatorHeaders()
@@ -527,6 +663,70 @@ export function subscribeOpenClawTelemetryStream(handlers: {
         return;
       }
       handlers.onError?.(error instanceof Error ? error : new Error("Telemetry stream failed."));
+    }
+  };
+
+  void run();
+  return () => {
+    closed = true;
+    controller.abort();
+  };
+}
+
+export function subscribeAgentNetworkStream(handlers: {
+  onReady?: (payload: unknown) => void;
+  onSnapshot?: (payload: unknown) => void;
+  onUpdate?: (payload: unknown) => void;
+  onError?: (error: Error) => void;
+}): () => void {
+  const controller = new AbortController();
+  let closed = false;
+
+  const run = async () => {
+    try {
+      const response = await fetchCore("/agent-network/stream", {
+        headers: {
+          Accept: "text/event-stream",
+          ...operatorHeaders()
+        },
+        signal: controller.signal
+      });
+      if (isAuthStatus(response.status)) {
+        throw new ApiAuthError(await readErrorMessage(response), response.status);
+      }
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response));
+      }
+      if (!response.body) {
+        throw new Error("Agent stream response body is empty.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      while (!closed) {
+        const result = await reader.read();
+        if (result.done) break;
+        buffer += decoder.decode(result.value, { stream: true });
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() ?? "";
+        for (const block of blocks) {
+          const parsed = parseSseBlock(block);
+          if (!parsed) continue;
+          if (parsed.event === "ready") {
+            handlers.onReady?.(parsed.data);
+          } else if (parsed.event === "snapshot") {
+            handlers.onSnapshot?.(parsed.data);
+          } else if (parsed.event === "update") {
+            handlers.onUpdate?.(parsed.data);
+          }
+        }
+      }
+    } catch (error) {
+      if (closed || controller.signal.aborted) {
+        return;
+      }
+      handlers.onError?.(error instanceof Error ? error : new Error("Agent stream failed."));
     }
   };
 

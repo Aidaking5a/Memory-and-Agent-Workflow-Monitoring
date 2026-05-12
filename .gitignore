@@ -5,11 +5,16 @@ coverage/
 pnpm-lock.yaml
 .env
 *.log
+.theia/
+.tmp_cp_cookie.txt
 apps/desktop/.vite/
 apps/desktop/node_modules/
 apps/local-core/node_modules/
 apps/control-plane/node_modules/
+apps/control-plane/data/public-auth.json
 apps/control-plane/data/login-events.json
 apps/control-plane/data/lead-submissions.json
+apps/control-plane/data/lead-deliveries.json
+apps/local-core/.theia/
 packages/*/node_modules/
 _theia_metadata.xml

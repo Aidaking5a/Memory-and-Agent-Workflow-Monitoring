@@ -1,15 +1,13 @@
 export type ViewKey =
-  | "onboarding"
-  | "openclaw"
-  | "overview"
-  | "agents"
-  | "timeline"
-  | "memory"
-  | "alerts"
-  | "governance"
-  | "compare"
-  | "audit"
-  | "settings";
+  | "dashboard"
+  | "network"
+  | "stats"
+  | "cards"
+  | "activity"
+  | "costs"
+  | "security"
+  | "settings"
+  | "help";
 
 export type OperatorRole = "owner" | "operator" | "reviewer" | "auditor" | "read_only";
 
@@ -88,6 +86,277 @@ export interface AgentHealth {
   connectorStability: number;
   currentObjective?: string;
   lastEventAt?: string;
+}
+
+export type AgentConnectionKind = "local" | "api" | "oauth" | "openclaw" | "terminal" | "custom";
+export type AgentControlLevel = "observe_only" | "query" | "pause_resume" | "steer" | "stop" | "full";
+export type AgentNetworkStatus =
+  | "active"
+  | "idle"
+  | "waiting"
+  | "blocked"
+  | "collaborating"
+  | "stopped"
+  | "emergency-stopped"
+  | "disconnected"
+  | "failed";
+export type AgentActivityCategory =
+  | "coding"
+  | "research"
+  | "browsing"
+  | "planning"
+  | "writing"
+  | "design"
+  | "finance"
+  | "operations"
+  | "customer_support"
+  | "file_management"
+  | "memory_update"
+  | "tool_execution"
+  | "idle"
+  | "blocked"
+  | "error";
+export type AgentNetworkControlAction =
+  | "query"
+  | "emergency_stop"
+  | "steer"
+  | "pause"
+  | "resume"
+  | "disconnect"
+  | "make_link"
+  | "break_link"
+  | "focus_together";
+
+export interface AgentNetworkTarget {
+  kind: string;
+  label: string;
+  ref?: string;
+  redacted?: boolean;
+}
+
+export interface AgentNetworkToolCall {
+  callId?: string;
+  name: string;
+  kind: "tool" | "skill" | "connector" | "api" | "terminal";
+  status: "started" | "completed" | "failed" | "blocked";
+  safeSummary?: string;
+}
+
+export interface AgentNetworkUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  model?: string;
+  vendor?: string;
+  apiProvider?: string;
+  estimatedCostUsd?: number;
+  paidServices?: string[];
+  runtimeMs?: number;
+  cpuPercent?: number;
+  ramBytes?: number;
+  gpuPercent?: number;
+  vramBytes?: number;
+  memoryFiles?: string[];
+  logBytes?: number;
+}
+
+export interface AgentNetworkEventSummary {
+  eventId: string;
+  timestamp: string;
+  sequence?: number;
+  agentId: string;
+  agentName: string;
+  category: AgentActivityCategory;
+  customCategory?: string;
+  status: AgentNetworkStatus;
+  riskLevel: "low" | "medium" | "high" | "critical";
+  confidence: number;
+  objective?: string;
+  currentTask?: string;
+  safeSummary: string;
+  decisionTrace: string[];
+  targets: AgentNetworkTarget[];
+  toolCalls: AgentNetworkToolCall[];
+  filesAccessed: string[];
+  websitesVisited: string[];
+  apiCalls: string[];
+  collaborationLinkIds: string[];
+  userVisibleExplanation?: string;
+  usage: AgentNetworkUsage;
+  privacy: {
+    redactionApplied: boolean;
+    sensitiveKinds: string[];
+    rawLogRef?: string;
+  };
+}
+
+export interface AgentNetworkStats {
+  eventCount: number;
+  tokens: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
+  estimatedCostUsd: number;
+  runtimeMs: number;
+  cpuPercent: number;
+  ramBytes: number;
+  gpuPercent: number;
+  vramBytes: number;
+  memoryFiles: string[];
+  paidServices: string[];
+  logBytes: number;
+  lastEventAt?: string;
+}
+
+export interface AgentCommandCenterAgent {
+  agentId: string;
+  name: string;
+  role: string;
+  domain: string;
+  model?: string;
+  vendor?: string;
+  connectionKind: AgentConnectionKind;
+  status: AgentNetworkStatus;
+  endpointLabel?: string;
+  tools: string[];
+  skills: string[];
+  connectors: string[];
+  memorySummary?: string;
+  soulSummary?: string;
+  controlLevel: AgentControlLevel;
+  canCollaborate: boolean;
+  canEmergencyStop: boolean;
+  trustLevel: "low" | "standard" | "trusted" | "restricted";
+  registeredAt: string;
+  updatedAt: string;
+  lastSeenAt?: string;
+  hasTelemetryToken?: boolean;
+  telemetryRevokedAt?: string;
+  tokenCreatedAt?: string;
+  stats: AgentNetworkStats;
+  latestEvent?: AgentNetworkEventSummary;
+  activityScore: number;
+  bubbleSize: number;
+  bubbleState:
+    | "active"
+    | "idle"
+    | "blocked"
+    | "collaborating"
+    | "high-cost"
+    | "warning"
+    | "stopped"
+    | "emergency-stopped";
+  networkPosition: {
+    x: number;
+    y: number;
+  };
+  activeLinkCount: number;
+  tokenUsage: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
+  costEstimateUsd: number;
+  currentTool?: string;
+  currentTarget?: AgentNetworkTarget;
+  currentTask?: string;
+  safeReasoningSummary: string[];
+}
+
+export interface AgentCommandCenterLink {
+  linkId: string;
+  sourceAgentId: string;
+  targetAgentId: string;
+  status: "proposed" | "active" | "paused" | "blocked" | "broken" | "expired";
+  taskScope: string;
+  permissions: string[];
+  priority: "low" | "normal" | "high";
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt?: string;
+  lastActivityAt?: string;
+}
+
+export interface AgentNetworkCommand {
+  commandId: string;
+  action: AgentNetworkControlAction;
+  status: "requested" | "accepted" | "rejected" | "running" | "completed" | "failed" | "cancelled";
+  actorId: string;
+  agentIds: string[];
+  linkIds: string[];
+  reason?: string;
+  instruction?: string;
+  highRisk: boolean;
+  requiresConfirmation: boolean;
+  createdAt: string;
+  updatedAt: string;
+  resultSummary?: string;
+  affectedResources: string[];
+}
+
+export interface AgentNetworkSnapshot {
+  generatedAt: string;
+  workspaceId: string;
+  workspaceName: string;
+  protocolVersion: "agent-activity/v1";
+  orchestrator: {
+    agentId: string;
+    name: string;
+    status: AgentNetworkStatus;
+    soulSummary?: string;
+    memorySummary?: string;
+    telemetryEndpoint: string;
+    streamEndpoint: string;
+    categories: AgentActivityCategory[];
+    customCategoryPattern: string;
+  };
+  stats: {
+    activeAgents: number;
+    totalAgents: number;
+    stoppedAgents: number;
+    activeLinks: number;
+    blockedLinks: number;
+    recentEvents: number;
+    tokens: {
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      estimatedCostUsd: number;
+      runtimeMs: number;
+      logBytes: number;
+    };
+    estimatedSpendUsd: number;
+    runtimeMs: number;
+    logBytes: number;
+    system: {
+      platform: string;
+      arch: string;
+      cpus: number;
+      loadAverage: number[];
+      totalRamBytes: number;
+      freeRamBytes: number;
+      usedRamBytes: number;
+      processRamBytes: number;
+      uptimeSeconds: number;
+    };
+    perAgent: Array<{
+      agentId: string;
+      name: string;
+      status: AgentNetworkStatus;
+      tokens: number;
+      estimatedCostUsd: number;
+      runtimeMs: number;
+      cpuPercent: number;
+      ramBytes: number;
+      activityScore: number;
+    }>;
+  };
+  agents: AgentCommandCenterAgent[];
+  links: AgentCommandCenterLink[];
+  events: AgentNetworkEventSummary[];
+  commands: AgentNetworkCommand[];
 }
 
 export interface TimelineItem {
@@ -551,6 +820,7 @@ export interface DashboardData {
   metrics: HealthMetric[];
   runs: RunSummary[];
   agents: AgentHealth[];
+  agentNetwork: AgentNetworkSnapshot;
   timeline: TimelineItem[];
   memory: MemoryItem[];
   memoryDocuments: MemoryDocument[];
