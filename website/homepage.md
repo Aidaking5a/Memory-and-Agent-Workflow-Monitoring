@@ -28,37 +28,32 @@ Surface unsupported assumptions, stale context, contradictions, and evidence gap
 3. Trust-First Architecture
 Local-first processing, explicit consent, least privilege, and audit-ready governance controls.
 
-## Install Commands
+## Quick Start
 
-Dashboard one-liner:
+Homepage quick-start command:
 
 ```powershell
-cmd /d /c scripts\start-theia-dashboard.cmd -OpenClawPath "%USERPROFILE%\src\openclaw"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://raw.githubusercontent.com/aidaking5a/Memory-and-Agent-Workflow-Monitoring/main/scripts/install-theia-command-center.ps1'; $p=Join-Path $env:TEMP 'install-theia-command-center.ps1'; Invoke-WebRequest $u -OutFile $p; Get-Content $p; powershell -NoProfile -ExecutionPolicy Bypass -File $p -BuildDashboard -StartAfterInstall"
 ```
 
-Apple/macOS dashboard one-liner:
+Install configurator page:
+
+```text
+website/site/install.html
+```
+
+Apple/macOS clean install:
 
 ```bash
-bash ./scripts/start-theia-dashboard.sh --openclaw-path "$HOME/src/openclaw"
+u="https://raw.githubusercontent.com/aidaking5a/Memory-and-Agent-Workflow-Monitoring/main/scripts/install-theia-command-center.sh"; p="/tmp/install-theia-command-center.sh"; curl -fsSL "$u" -o "$p"; sed -n '1,180p' "$p"; bash "$p" --build-dashboard --start-after-install
 ```
 
-Marketing site one-liner:
+The detailed dashboard, clone, marketing site, Octopoda, and MCP commands live on the install configurator page to keep the homepage clean.
+
+Marketing site preview from a clone:
 
 ```powershell
-pnpm.cmd run dev:marketing
-```
-
-Apple/macOS marketing site one-liner:
-
-```bash
-bash ./scripts/start-theia-marketing-site.sh --port 4173
-```
-
-Octopoda local connector:
-
-```powershell
-py -m pip install "octopoda[server,mcp]"
-octopoda
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-theia-marketing-site.ps1 -Port 4173
 ```
 
 ## Proof Section

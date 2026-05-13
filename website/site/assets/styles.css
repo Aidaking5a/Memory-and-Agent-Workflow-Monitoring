@@ -1299,6 +1299,403 @@ body {
   gap: 0.82rem;
 }
 
+.quickstart-section {
+  padding-top: 4.8rem;
+  padding-bottom: 4.8rem;
+}
+
+.quickstart-wrap {
+  display: grid;
+  justify-items: center;
+  gap: 1.1rem;
+  text-align: center;
+}
+
+.quickstart-heading {
+  max-width: 860px;
+}
+
+.quickstart-heading h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.58rem;
+  font-family: "Sora", "Segoe UI", sans-serif;
+  font-size: clamp(2rem, 4vw, 3.35rem);
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.quickstart-heading h2 span {
+  color: #55ffb2;
+  text-shadow: 0 0 20px rgba(85, 255, 178, 0.45);
+}
+
+.quickstart-heading p {
+  margin: 0.72rem auto 0;
+  max-width: 72ch;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.quickstart-terminal,
+.configurator-shell {
+  border: 1px solid rgba(85, 255, 178, 0.2);
+  background:
+    linear-gradient(180deg, rgba(13, 24, 35, 0.74), rgba(7, 18, 15, 0.96)),
+    rgba(7, 19, 15, 0.92);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.46), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.quickstart-terminal {
+  width: min(100%, 980px);
+  border-radius: 18px;
+  overflow: hidden;
+  text-align: left;
+}
+
+.terminal-chrome {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1rem;
+  min-height: 64px;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid rgba(85, 255, 178, 0.12);
+  background: rgba(7, 15, 25, 0.76);
+}
+
+.traffic-lights {
+  display: inline-flex;
+  gap: 0.56rem;
+}
+
+.traffic-lights span {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  box-shadow: 0 0 18px rgba(255, 255, 255, 0.12);
+}
+
+.traffic-lights span:nth-child(1) {
+  background: #ff5f57;
+}
+
+.traffic-lights span:nth-child(2) {
+  background: #ffbd2e;
+}
+
+.traffic-lights span:nth-child(3) {
+  background: #28c840;
+}
+
+.quickstart-tabs,
+.segmented-control {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-self: center;
+  border: 1px solid rgba(85, 255, 178, 0.08);
+  border-radius: 12px;
+  padding: 0.28rem;
+  background: rgba(1, 7, 11, 0.58);
+}
+
+.quickstart-tabs button,
+.segmented-control button {
+  appearance: none;
+  border: 0;
+  border-radius: 9px;
+  min-height: 34px;
+  padding: 0.42rem 0.84rem;
+  color: #8fa79c;
+  background: transparent;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.quickstart-tabs button[data-active="true"],
+.segmented-control button[data-active="true"] {
+  color: #02120c;
+  background: #55ffb2;
+  box-shadow: 0 0 24px rgba(85, 255, 178, 0.22);
+}
+
+.terminal-config-link {
+  justify-self: end;
+  border: 1px solid rgba(85, 255, 178, 0.16);
+  border-radius: 10px;
+  padding: 0.44rem 0.68rem;
+  color: #c8ffea;
+  background: rgba(85, 255, 178, 0.045);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.command-stage,
+.command-builder {
+  position: relative;
+}
+
+.command-stage {
+  padding: 1.5rem 1.45rem 1.6rem;
+}
+
+.command-stage p,
+.command-builder-note {
+  margin: 0 0 1rem;
+  color: #7f948c;
+  font-family: Consolas, "JetBrains Mono", monospace;
+  font-size: 0.94rem;
+  font-style: italic;
+  line-height: 1.55;
+}
+
+.command-stage p {
+  max-width: calc(100% - 160px);
+}
+
+.command-line-row,
+.command-block {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 0.75rem;
+  color: #f3fff9;
+}
+
+.command-line-row > span,
+.command-block > span {
+  color: #55ffb2;
+  font-family: Consolas, "JetBrains Mono", monospace;
+  font-weight: 800;
+}
+
+.command-line-row code,
+.command-block code {
+  display: block;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: Consolas, "JetBrains Mono", monospace;
+  font-size: clamp(0.84rem, 1.55vw, 1.02rem);
+  line-height: 1.58;
+}
+
+.copy-command {
+  appearance: none;
+  border: 1px solid rgba(85, 255, 178, 0.18);
+  border-radius: 10px;
+  min-height: 42px;
+  padding: 0.55rem 0.78rem;
+  color: #dfffee;
+  background: rgba(85, 255, 178, 0.08);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 180ms ease, background-color 180ms ease, border-color 180ms ease;
+}
+
+.copy-command:hover {
+  transform: translateY(-1px);
+  border-color: rgba(85, 255, 178, 0.36);
+  background: rgba(85, 255, 178, 0.13);
+}
+
+.command-stage .copy-command {
+  position: absolute;
+  right: 1.15rem;
+  top: 1.25rem;
+}
+
+.quickstart-assurance-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.62rem;
+  max-width: 920px;
+  color: #8fb9a8;
+}
+
+.quickstart-assurance-row span {
+  border: 1px solid rgba(85, 255, 178, 0.12);
+  border-radius: 999px;
+  padding: 0.42rem 0.7rem;
+  background: rgba(85, 255, 178, 0.04);
+  font-size: 0.8rem;
+}
+
+.install-config-hero {
+  padding-bottom: 2.4rem;
+}
+
+.install-config-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.72fr);
+  gap: 1rem;
+  align-items: end;
+}
+
+.install-config-grid p {
+  max-width: 68ch;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.install-principles {
+  border: 1px solid rgba(85, 255, 178, 0.16);
+  border-radius: 18px;
+  padding: 1rem;
+  background: linear-gradient(180deg, rgba(8, 26, 19, 0.84), rgba(3, 11, 9, 0.94));
+  box-shadow: var(--shadow);
+}
+
+.install-principles h2 {
+  margin: 0;
+  font-family: "Sora", "Segoe UI", sans-serif;
+  font-size: 1.02rem;
+  letter-spacing: 0;
+}
+
+.install-principles ul,
+.command-aftercare ol {
+  margin: 0.72rem 0 0;
+  padding-left: 1.05rem;
+  color: var(--muted);
+  display: grid;
+  gap: 0.44rem;
+}
+
+.install-config-section {
+  padding-top: 1.2rem;
+}
+
+.configurator-shell {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.72fr) minmax(0, 1fr);
+  gap: 1rem;
+  border-radius: 20px;
+  padding: 1rem;
+}
+
+.configurator-panel,
+.command-builder {
+  border: 1px solid rgba(85, 255, 178, 0.12);
+  border-radius: 16px;
+  background: rgba(1, 7, 6, 0.46);
+}
+
+.configurator-panel {
+  padding: 1rem;
+}
+
+.configurator-panel h2,
+.command-builder h2 {
+  margin: 0;
+  font-family: "Sora", "Segoe UI", sans-serif;
+  font-size: 1.2rem;
+  letter-spacing: 0;
+}
+
+.configurator-panel p {
+  margin: 0.48rem 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.config-control-group {
+  margin-top: 1rem;
+}
+
+.config-control-group h3,
+.command-aftercare h3 {
+  margin: 0 0 0.58rem;
+  color: #dfffee;
+  font-size: 0.88rem;
+}
+
+.setup-choice-grid {
+  display: grid;
+  gap: 0.52rem;
+}
+
+.setup-choice-grid button {
+  appearance: none;
+  display: grid;
+  gap: 0.18rem;
+  border: 1px solid rgba(85, 255, 178, 0.1);
+  border-radius: 12px;
+  padding: 0.72rem;
+  color: #eafff6;
+  background: rgba(85, 255, 178, 0.035);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.setup-choice-grid button[data-active="true"] {
+  border-color: rgba(85, 255, 178, 0.34);
+  background: linear-gradient(90deg, rgba(85, 255, 178, 0.18), rgba(85, 255, 178, 0.045));
+}
+
+.setup-choice-grid button span {
+  color: #8fb9a8;
+  font-size: 0.78rem;
+}
+
+.command-builder {
+  padding: 1rem;
+}
+
+.command-builder-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.terminal-label {
+  display: block;
+  margin-bottom: 0.28rem;
+  color: #55ffb2;
+  font-family: Consolas, "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.command-builder-note {
+  margin-top: 1rem;
+}
+
+.command-block {
+  margin-top: 0.8rem;
+  min-height: 170px;
+  border: 1px solid rgba(85, 255, 178, 0.12);
+  border-radius: 14px;
+  padding: 1rem;
+  background:
+    linear-gradient(90deg, rgba(85, 255, 178, 0.04) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(85, 255, 178, 0.035) 1px, transparent 1px),
+    rgba(0, 5, 4, 0.62);
+  background-size: 34px 34px, 34px 34px, auto;
+}
+
+.command-aftercare {
+  margin-top: 1rem;
+  border-top: 1px solid rgba(85, 255, 178, 0.1);
+  padding-top: 0.9rem;
+}
+
+.install-support-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.82rem;
+}
+
 .chart-section {
   opacity: 0.88;
 }
@@ -1314,7 +1711,10 @@ textarea:focus,
 
 @media (max-width: 980px) {
   .install-grid,
-  .dashboard-feature-grid {
+  .dashboard-feature-grid,
+  .install-config-grid,
+  .configurator-shell,
+  .install-support-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1331,6 +1731,59 @@ textarea:focus,
     width: 78px;
     height: 78px;
     font-size: 0.68rem;
+  }
+
+  .terminal-chrome {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .quickstart-tabs {
+    justify-self: start;
+  }
+
+  .terminal-config-link {
+    justify-self: start;
+  }
+
+  .command-stage .copy-command {
+    position: static;
+    margin-top: 1rem;
+  }
+
+  .command-stage p {
+    max-width: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .quickstart-terminal,
+  .configurator-shell {
+    border-radius: 14px;
+  }
+
+  .command-stage,
+  .command-builder,
+  .configurator-panel {
+    padding: 0.84rem;
+  }
+
+  .quickstart-tabs,
+  .segmented-control {
+    width: 100%;
+  }
+
+  .quickstart-tabs button,
+  .segmented-control button {
+    flex: 1 1 42%;
+  }
+
+  .command-builder-top {
+    flex-direction: column;
+  }
+
+  .command-builder-top .copy-command {
+    width: 100%;
   }
 }
 

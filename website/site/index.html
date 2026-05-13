@@ -105,7 +105,7 @@
           <a href="security.html">Security</a>
           <a href="pricing.html">Pricing</a>
           <a href="resources.html">Resources</a>
-          <a class="cta-small" href="#install">Install</a>
+          <a class="cta-small" href="install.html">Install</a>
         </nav>
       </div>
     </header>
@@ -123,11 +123,7 @@
             </p>
             <div class="button-row">
               <a class="button primary" href="#install">Copy One-Liner</a>
-              <a class="button secondary" href="#dashboard-preview">View Dashboard</a>
-            </div>
-            <div class="hero-command" aria-label="Dashboard start command">
-              <span>Start dashboard</span>
-              <code>cmd /d /c scripts\start-theia-dashboard.cmd -OpenClawPath "%USERPROFILE%\src\openclaw"</code>
+              <a class="button secondary" href="install.html">Configure Install</a>
             </div>
             <div class="badge-row">
               <span class="badge">One-Line Windows Setup</span>
@@ -175,62 +171,51 @@
         </div>
       </section>
 
-      <section class="section install-section" id="install">
-        <div class="container install-grid">
-          <div>
-            <span class="kicker">Install Theia</span>
-            <h2>One-Liner Or Clone-Based Setup.</h2>
-            <p class="section-sub">
-              Windows is the first-class path. The installer is transparent: it prints the plan, checks for Git, Node,
-              and pnpm, and does not silently install runtimes, Docker, WSL, paid APIs, or risky dependencies.
+      <section class="section quickstart-section" id="install" aria-labelledby="quickstart-title">
+        <div class="container quickstart-wrap">
+          <div class="quickstart-heading">
+            <h2 id="quickstart-title"><span aria-hidden="true">&gt;</span> Quick Start</h2>
+            <p>
+              A clean install path for customers who want the command center running locally before they start pairing
+              OpenClaw, Octopoda, MCP, API, OAuth, or terminal agents.
             </p>
-            <div class="install-tabs">
-              <article class="install-card primary-install">
-                <h3>Customer One-Line Install</h3>
-                <code>powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://raw.githubusercontent.com/aidaking5a/Memory-and-Agent-Workflow-Monitoring/main/scripts/install-theia-command-center.ps1'; $p=Join-Path $env:TEMP 'install-theia-command-center.ps1'; Invoke-WebRequest $u -OutFile $p; Get-Content $p; powershell -NoProfile -ExecutionPolicy Bypass -File $p -BuildDashboard -StartAfterInstall"</code>
-              </article>
-              <article class="install-card primary-install">
-                <h3>Apple/macOS One-Line Install</h3>
-                <code>u="https://raw.githubusercontent.com/aidaking5a/Memory-and-Agent-Workflow-Monitoring/main/scripts/install-theia-command-center.sh"; p="/tmp/install-theia-command-center.sh"; curl -fsSL "$u" -o "$p"; sed -n '1,180p' "$p"; bash "$p" --build-dashboard --start-after-install</code>
-              </article>
-              <article class="install-card">
-                <h3>Clone-Based Developer Setup</h3>
-                <code>git clone https://github.com/aidaking5a/Memory-and-Agent-Workflow-Monitoring.git &amp;&amp; cd Memory-and-Agent-Workflow-Monitoring &amp;&amp; pnpm install &amp;&amp; scripts\start-theia-dashboard.cmd -OpenClawPath "%USERPROFILE%\src\openclaw"</code>
-              </article>
-              <article class="install-card">
-                <h3>Apple/macOS Clone Setup</h3>
-                <code>git clone https://github.com/aidaking5a/Memory-and-Agent-Workflow-Monitoring.git &amp;&amp; cd Memory-and-Agent-Workflow-Monitoring &amp;&amp; pnpm install &amp;&amp; bash ./scripts/start-theia-dashboard.sh --openclaw-path "$HOME/src/openclaw"</code>
-              </article>
-              <article class="install-card">
-                <h3>Marketing Site One-Liner</h3>
-                <code>powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-theia-marketing-site.ps1 -Port 4173</code>
-              </article>
-              <article class="install-card">
-                <h3>Apple/macOS Marketing Site</h3>
-                <code>bash ./scripts/start-theia-marketing-site.sh --port 4173</code>
-              </article>
-              <article class="install-card">
-                <h3>Octopoda Local Connector</h3>
-                <code>py -m pip install "octopoda[server,mcp]" &amp;&amp; octopoda</code>
-              </article>
-              <article class="install-card">
-                <h3>MCP Adapter Validation</h3>
-                <code>node ".\integrations\mcp\theia-mcp-server.mjs" --self-test</code>
-              </article>
-            </div>
           </div>
-          <aside class="install-checklist">
-            <h3>What The Setup Does</h3>
-            <ul>
-              <li>Clones or updates the Theia command center repo.</li>
-              <li>Installs audited workspace dependencies through pnpm.</li>
-              <li>Starts the local core API and dashboard.</li>
-              <li>Generates connector cards for Octopoda, OpenClaw skill, MCP, API/OAuth, terminal, and custom JSON paths.</li>
-              <li>Adds an Apple/macOS shell path that mirrors Windows without silently installing runtimes or paid services.</li>
-              <li>Uses <code>C:\Users\admin_1\src\openclaw</code> as the OpenClaw discovery path when present.</li>
-              <li>Leaves connector keys, OAuth grants, Docker, WSL, and paid APIs for explicit manual setup.</li>
-            </ul>
-          </aside>
+
+          <article class="quickstart-terminal" data-command-tabs data-copy-scope>
+            <div class="terminal-chrome">
+              <div class="traffic-lights" aria-hidden="true">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+              <div class="quickstart-tabs" role="tablist" aria-label="Quick start command type">
+                <button type="button" data-command-tab="windows" data-active="true">Windows</button>
+                <button type="button" data-command-tab="macos">macOS</button>
+                <button type="button" data-command-tab="clone">Clone</button>
+                <button type="button" data-command-tab="marketing">Marketing</button>
+              </div>
+              <a class="terminal-config-link" href="install.html">Configure</a>
+            </div>
+            <div class="command-stage">
+              <p data-command-note>
+                Downloads the Windows installer script, prints it for review, builds the dashboard, and starts Theia.
+              </p>
+              <div class="command-line-row">
+                <span aria-hidden="true">$</span>
+                <code data-command-output>powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://raw.githubusercontent.com/aidaking5a/Memory-and-Agent-Workflow-Monitoring/main/scripts/install-theia-command-center.ps1'; $p=Join-Path $env:TEMP 'install-theia-command-center.ps1'; Invoke-WebRequest $u -OutFile $p; Get-Content $p; powershell -NoProfile -ExecutionPolicy Bypass -File $p -BuildDashboard -StartAfterInstall"</code>
+              </div>
+              <button class="copy-command" type="button" data-copy-command data-copy-target="[data-command-output]">
+                Copy Command
+              </button>
+            </div>
+          </article>
+
+          <div class="quickstart-assurance-row" aria-label="Installer assurances">
+            <span>Prints script before running</span>
+            <span>No silent Docker or WSL</span>
+            <span>No paid API setup</span>
+            <span>Reversible local install</span>
+          </div>
         </div>
       </section>
 
