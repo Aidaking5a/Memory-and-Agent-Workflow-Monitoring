@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Theia Install Configurator | Pick The Right Local Setup Command</title>
+    <meta
+      name="description"
+      content="Choose the right Theia install command for Windows, macOS, clone-based setup, marketing site preview, Octopoda, and MCP adapter validation."
+    />
+    <meta name="theme-color" content="#020605" />
+    <meta name="robots" content="index,follow,max-image-preview:large" />
+    <link rel="canonical" href="https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/install.html" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Theia Install Configurator" />
+    <meta
+      property="og:description"
+      content="Configure a local-first Theia install command without hunting through docs or mixing dashboard, marketing, connector, and clone workflows."
+    />
+    <meta property="og:url" content="https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/install.html" />
+    <meta property="og:image" content="https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/assets/og-card.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Theia Install Configurator" />
+    <meta
+      name="twitter:description"
+      content="Pick your platform and setup path, then copy the exact Theia command."
+    />
+    <meta name="twitter:image" content="https://aidaking5a.github.io/Memory-and-Agent-Workflow-Monitoring/assets/og-card.svg" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="alternate" type="application/rss+xml" title="Theia Updates" href="feed.xml" />
+    <link rel="icon" href="assets/theia-icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header" role="banner">
+      <div class="container topbar">
+        <a class="brand" href="index.html">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-label">THEIA</span>
+        </a>
+        <button class="nav-toggle" data-nav-toggle aria-expanded="false" aria-controls="site-nav">Menu</button>
+        <nav id="site-nav" class="nav" data-nav-menu aria-label="Primary">
+          <a href="index.html">Home</a>
+          <a href="product.html">Product</a>
+          <a href="use-cases.html">Use Cases</a>
+          <a href="security.html">Security</a>
+          <a href="pricing.html">Pricing</a>
+          <a href="resources.html">Resources</a>
+          <a class="cta-small active" href="install.html">Install</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="section install-config-hero">
+        <div class="container install-config-grid">
+          <div>
+            <h1>Install Configurator</h1>
+            <p>
+              Pick your platform and setup goal. Theia gives you one exact command and keeps advanced connector paths
+              out of the homepage so customers do not have to guess.
+            </p>
+          </div>
+          <aside class="install-principles" aria-label="Install safety principles">
+            <h2>Safe By Default</h2>
+            <ul>
+              <li>Scripts are downloaded to a temp file and printed before execution.</li>
+              <li>Node, pnpm, Git, Docker, WSL, Python, paid APIs, and cloud keys are never silently installed.</li>
+              <li>Cloud and OAuth connector credentials stay opt-in and local to your setup.</li>
+            </ul>
+          </aside>
+        </div>
+      </section>
+
+      <section class="section install-config-section" aria-labelledby="configurator-title">
+        <div class="container configurator-shell" data-install-configurator data-copy-scope>
+          <div class="configurator-panel">
+            <h2 id="configurator-title">Build Your Command</h2>
+            <p>Use these controls when you need a specific customer setup, local dev run, or connector validation path.</p>
+
+            <div class="config-control-group">
+              <h3>Platform</h3>
+              <div class="segmented-control" role="group" aria-label="Platform">
+                <button type="button" data-config-platform="windows" data-active="true">Windows</button>
+                <button type="button" data-config-platform="macos">macOS & Linux</button>
+              </div>
+            </div>
+
+            <div class="config-control-group">
+              <h3>Setup Goal</h3>
+              <div class="setup-choice-grid" role="group" aria-label="Setup goal">
+                <button type="button" data-config-mode="oneLine" data-active="true">
+                  <strong>Clean install</strong>
+                  <span>Customer one-liner</span>
+                </button>
+                <button type="button" data-config-mode="clone">
+                  <strong>Clone setup</strong>
+                  <span>Developer-style repo flow</span>
+                </button>
+                <button type="button" data-config-mode="dashboard">
+                  <strong>Dashboard</strong>
+                  <span>Start local command center</span>
+                </button>
+                <button type="button" data-config-mode="marketing">
+                  <strong>Marketing site</strong>
+                  <span>Preview this website locally</span>
+                </button>
+                <button type="button" data-config-mode="octopoda">
+                  <strong>Octopoda</strong>
+                  <span>Local connector service</span>
+                </button>
+                <button type="button" data-config-mode="mcp">
+                  <strong>MCP adapter</strong>
+                  <span>Validate safe tool bridge</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <article class="command-builder">
+            <div class="command-builder-top">
+              <div>
+                <span class="terminal-label">Generated command</span>
+                <h2 data-config-title>Windows Clean Install</h2>
+              </div>
+              <button class="copy-command" type="button" data-copy-command data-copy-target="[data-config-command]">
+                Copy
+              </button>
+            </div>
+            <p class="command-builder-note" data-config-note>
+              Downloads the Windows installer script, prints it for review, builds the dashboard, and starts Theia.
+            </p>
+            <div class="command-block">
+              <span aria-hidden="true">$</span>
+              <code data-config-command>powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://raw.githubusercontent.com/aidaking5a/Memory-and-Agent-Workflow-Monitoring/main/scripts/install-theia-command-center.ps1'; $p=Join-Path $env:TEMP 'install-theia-command-center.ps1'; Invoke-WebRequest $u -OutFile $p; Get-Content $p; powershell -NoProfile -ExecutionPolicy Bypass -File $p -BuildDashboard -StartAfterInstall"</code>
+            </div>
+            <div class="command-aftercare">
+              <h3>After It Runs</h3>
+              <ol>
+                <li>Open the dashboard at <code>http://localhost:5173</code>.</li>
+                <li>Use Connect Agent to pair OpenClaw, Octopoda, MCP, API/OAuth, terminal, or custom JSON reporters.</li>
+                <li>Validate the connector, then confirm live bubbles, stats, and agent cards update.</li>
+              </ol>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container install-support-grid">
+          <article class="card">
+            <h3>Recommended Customer Path</h3>
+            <p>
+              Use Clean Install on Windows first. It is the clearest path for non-technical users and keeps every
+              risky or paid dependency explicit.
+            </p>
+          </article>
+          <article class="card">
+            <h3>OpenClaw Path</h3>
+            <p>
+              The default Windows dashboard command searches <code>C:\Users\admin_1\src\openclaw</code>. The macOS
+              path mirrors that as <code>$HOME/src/openclaw</code>.
+            </p>
+          </article>
+          <article class="card">
+            <h3>Connector Rule</h3>
+            <p>
+              Install commands start Theia. Connector keys, OAuth grants, Octopoda, MCP clients, and paid APIs are
+              paired manually from the dashboard.
+            </p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-grid">
+        <div>
+          <h4>Theia</h4>
+          <p>Trusted orchestration and observability for serious agent operations.</p>
+        </div>
+        <div>
+          <h4>Product</h4>
+          <a href="product.html">Platform Overview</a>
+          <a href="security.html">Security & Trust</a>
+          <a href="resources.html">Docs & Resources</a>
+          <a href="changelog.html">Changelog</a>
+        </div>
+        <div>
+          <h4>Company</h4>
+          <a href="contact.html">Contact / Demo</a>
+          <a href="case-studies.html">Case Studies</a>
+          <a href="mailto:security@theiaops.ai">Security Contact</a>
+          <a href="mailto:support@theiaops.ai">Support</a>
+        </div>
+      </div>
+      <div class="container footer-note">© <span data-current-year></span> Theia. All rights reserved.</div>
+    </footer>
+
+    <script src="assets/app.js" defer></script>
+  </body>
+</html>

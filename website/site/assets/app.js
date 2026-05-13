@@ -25,6 +25,96 @@
     yearNode.textContent = String(new Date().getFullYear());
   }
 
+  const COMMAND_PRESETS = {
+    windows: {
+      note: "Downloads the Windows installer script, prints it for review, builds the dashboard, and starts Theia.",
+      command: String.raw`powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='https://raw.githubusercontent.com/aidaking5a/Memory-and-Agent-Workflow-Monitoring/main/scripts/install-theia-command-center.ps1'; $p=Join-Path $env:TEMP 'install-theia-command-center.ps1'; Invoke-WebRequest $u -OutFile $p; Get-Content $p; powershell -NoProfile -ExecutionPolicy Bypass -File $p -BuildDashboard -StartAfterInstall"`
+    },
+    macos: {
+      note: "Downloads the macOS/Linux shell installer, prints the first section for review, builds the dashboard, and starts Theia.",
+      command: String.raw`u="https://raw.githubusercontent.com/aidaking5a/Memory-and-Agent-Workflow-Monitoring/main/scripts/install-theia-command-center.sh"; p="/tmp/install-theia-command-center.sh"; curl -fsSL "$u" -o "$p"; sed -n '1,180p' "$p"; bash "$p" --build-dashboard --start-after-install`
+    },
+    clone: {
+      note: "Clone-based setup for users who want the OpenClaw-style developer flow.",
+      command: String.raw`git clone https://github.com/aidaking5a/Memory-and-Agent-Workflow-Monitoring.git && cd Memory-and-Agent-Workflow-Monitoring && pnpm install && scripts\start-theia-dashboard.cmd -OpenClawPath "%USERPROFILE%\src\openclaw"`
+    },
+    marketing: {
+      note: "Preview the marketing site locally after cloning the repo.",
+      command: String.raw`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-theia-marketing-site.ps1 -Port 4173`
+    }
+  };
+
+  const INSTALL_CONFIGS = {
+    windows: {
+      oneLine: {
+        title: "Windows Clean Install",
+        note: COMMAND_PRESETS.windows.note,
+        command: COMMAND_PRESETS.windows.command
+      },
+      clone: {
+        title: "Windows Clone Setup",
+        note: "Clone the repository, install workspace dependencies, and start the dashboard against the default OpenClaw path.",
+        command: COMMAND_PRESETS.clone.command
+      },
+      dashboard: {
+        title: "Windows Dashboard Start",
+        note: "Use this from an existing clone when you only need to restart the local core and dashboard.",
+        command: String.raw`cmd /d /c scripts\start-theia-dashboard.cmd -OpenClawPath "%USERPROFILE%\src\openclaw"`
+      },
+      marketing: {
+        title: "Windows Marketing Preview",
+        note: COMMAND_PRESETS.marketing.note,
+        command: COMMAND_PRESETS.marketing.command
+      },
+      octopoda: {
+        title: "Windows Octopoda Local Connector",
+        note: "Install and start Octopoda yourself, then validate the connector from Theia's Connect Agent drawer.",
+        command: String.raw`py -m pip install "octopoda[server,mcp]" && octopoda`
+      },
+      mcp: {
+        title: "Windows MCP Adapter Validation",
+        note: "Run the safe Theia MCP bridge self-test. It exposes reporting and command-read tools only.",
+        command: String.raw`node ".\integrations\mcp\theia-mcp-server.mjs" --self-test`
+      }
+    },
+    macos: {
+      oneLine: {
+        title: "macOS & Linux Clean Install",
+        note: COMMAND_PRESETS.macos.note,
+        command: COMMAND_PRESETS.macos.command
+      },
+      clone: {
+        title: "macOS & Linux Clone Setup",
+        note: "Clone the repository, install workspace dependencies, and start the dashboard with your local OpenClaw path.",
+        command: String.raw`git clone https://github.com/aidaking5a/Memory-and-Agent-Workflow-Monitoring.git && cd Memory-and-Agent-Workflow-Monitoring && pnpm install && bash ./scripts/start-theia-dashboard.sh --openclaw-path "$HOME/src/openclaw"`
+      },
+      dashboard: {
+        title: "macOS & Linux Dashboard Start",
+        note: "Use this from an existing clone when you only need to restart the local core and dashboard.",
+        command: String.raw`bash ./scripts/start-theia-dashboard.sh --openclaw-path "$HOME/src/openclaw"`
+      },
+      marketing: {
+        title: "macOS & Linux Marketing Preview",
+        note: "Preview the marketing site locally after cloning the repo.",
+        command: String.raw`bash ./scripts/start-theia-marketing-site.sh --port 4173`
+      },
+      octopoda: {
+        title: "macOS & Linux Octopoda Local Connector",
+        note: "Install and start Octopoda yourself, then validate the connector from Theia's Connect Agent drawer.",
+        command: String.raw`python3 -m pip install "octopoda[server,mcp]" && octopoda`
+      },
+      mcp: {
+        title: "macOS & Linux MCP Adapter Validation",
+        note: "Run the safe Theia MCP bridge self-test. It exposes reporting and command-read tools only.",
+        command: String.raw`node ./integrations/mcp/theia-mcp-server.mjs --self-test`
+      }
+    }
+  };
+
+  initCommandTabs();
+  initInstallConfigurator();
+  initCopyCommands();
+
   const leadForm = document.querySelector("[data-theia-lead-form]");
   if (leadForm instanceof HTMLFormElement) {
     const LEAD_AUTH_TOKEN_KEY = "theiaLeadAuthToken";
@@ -326,6 +416,126 @@
         setSubmitBusy(false);
       }
     });
+  }
+
+  function initCommandTabs() {
+    document.querySelectorAll("[data-command-tabs]").forEach(function (root) {
+      const outputNode = root.querySelector("[data-command-output]");
+      const noteNode = root.querySelector("[data-command-note]");
+      const buttons = Array.from(root.querySelectorAll("[data-command-tab]"));
+      if (!(outputNode instanceof HTMLElement) || buttons.length === 0) {
+        return;
+      }
+
+      function applyPreset(key) {
+        const preset = COMMAND_PRESETS[key] || COMMAND_PRESETS.windows;
+        outputNode.textContent = preset.command;
+        if (noteNode instanceof HTMLElement) {
+          noteNode.textContent = preset.note;
+        }
+        buttons.forEach(function (button) {
+          button.setAttribute("data-active", button.getAttribute("data-command-tab") === key ? "true" : "false");
+        });
+      }
+
+      buttons.forEach(function (button) {
+        button.addEventListener("click", function () {
+          applyPreset(button.getAttribute("data-command-tab") || "windows");
+        });
+      });
+    });
+  }
+
+  function initInstallConfigurator() {
+    const root = document.querySelector("[data-install-configurator]");
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+
+    const platformButtons = Array.from(root.querySelectorAll("[data-config-platform]"));
+    const modeButtons = Array.from(root.querySelectorAll("[data-config-mode]"));
+    const titleNode = root.querySelector("[data-config-title]");
+    const noteNode = root.querySelector("[data-config-note]");
+    const commandNode = root.querySelector("[data-config-command]");
+    let platform = "windows";
+    let mode = "oneLine";
+
+    function render() {
+      const config = INSTALL_CONFIGS[platform]?.[mode] || INSTALL_CONFIGS.windows.oneLine;
+      if (titleNode instanceof HTMLElement) titleNode.textContent = config.title;
+      if (noteNode instanceof HTMLElement) noteNode.textContent = config.note;
+      if (commandNode instanceof HTMLElement) commandNode.textContent = config.command;
+      platformButtons.forEach(function (button) {
+        button.setAttribute(
+          "data-active",
+          button.getAttribute("data-config-platform") === platform ? "true" : "false"
+        );
+      });
+      modeButtons.forEach(function (button) {
+        button.setAttribute("data-active", button.getAttribute("data-config-mode") === mode ? "true" : "false");
+      });
+    }
+
+    platformButtons.forEach(function (button) {
+      button.addEventListener("click", function () {
+        platform = button.getAttribute("data-config-platform") || "windows";
+        render();
+      });
+    });
+
+    modeButtons.forEach(function (button) {
+      button.addEventListener("click", function () {
+        mode = button.getAttribute("data-config-mode") || "oneLine";
+        render();
+      });
+    });
+
+    render();
+  }
+
+  function initCopyCommands() {
+    document.querySelectorAll("[data-copy-command]").forEach(function (button) {
+      button.addEventListener("click", async function () {
+        const selector = button.getAttribute("data-copy-target");
+        const scope = button.closest("[data-copy-scope]") || document;
+        const target = selector ? scope.querySelector(selector) : null;
+        const text = target instanceof HTMLElement ? target.textContent || "" : "";
+        if (!text.trim()) {
+          return;
+        }
+
+        const originalLabel = button.textContent || "Copy";
+        try {
+          await copyText(text);
+          button.textContent = "Copied";
+        } catch {
+          button.textContent = "Select Text";
+        } finally {
+          window.setTimeout(function () {
+            button.textContent = originalLabel;
+          }, 1400);
+        }
+      });
+    });
+  }
+
+  async function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.setAttribute("readonly", "true");
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    document.body.appendChild(textArea);
+    textArea.select();
+    const copied = document.execCommand("copy");
+    textArea.remove();
+    if (!copied) {
+      throw new Error("Copy failed");
+    }
   }
 
   initMarketingCharts();
