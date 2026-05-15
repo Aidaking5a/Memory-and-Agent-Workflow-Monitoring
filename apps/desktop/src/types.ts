@@ -338,6 +338,62 @@ export interface AgentNetworkCommand {
   affectedResources: string[];
 }
 
+export interface ActiveGoalLayer {
+  goalId: string;
+  title: string;
+  summary: string;
+  status: "ready" | "active" | "blocked" | "complete";
+  ownerAgentId?: string;
+  progressPercent: number;
+  currentStep: string;
+  successCriteria: string[];
+  linkedAgentIds: string[];
+  blockers: string[];
+  updatedAt: string;
+  minorAutonomyAllowed: boolean;
+  majorActionRequiresApproval: boolean;
+}
+
+export interface OperatorActivityCard {
+  cardId: string;
+  eventId: string;
+  agentId: string;
+  agentName: string;
+  timestamp: string;
+  title: string;
+  whatHappened: string;
+  whyItMatters: string;
+  risk: "low" | "medium" | "high" | "critical";
+  status: AgentNetworkStatus;
+  costUsd: number;
+  tokens: number;
+  toolUsed: string;
+  filesTouched: string[];
+  nextAction: string;
+}
+
+export interface ConnectionDoctorIssue {
+  issueId: string;
+  severity: "info" | "warning" | "critical";
+  title: string;
+  diagnosis: string;
+  recovery: string;
+  recoveryCommand?: string;
+  checks: string[];
+  connectorId?: string;
+}
+
+export interface EmergencyStopPlan {
+  agentId: string;
+  connectorKind: AgentConnectionKind;
+  primaryAction: string;
+  fallbackAction: string;
+  affectedResources: string[];
+  auditRequired: boolean;
+  requiresConfirmation: boolean;
+  userReconnectRequired: boolean;
+}
+
 export interface AgentNetworkSnapshot {
   generatedAt: string;
   workspaceId: string;
@@ -399,6 +455,10 @@ export interface AgentNetworkSnapshot {
   links: AgentCommandCenterLink[];
   events: AgentNetworkEventSummary[];
   commands: AgentNetworkCommand[];
+  activeGoal: ActiveGoalLayer;
+  operatorCards: OperatorActivityCard[];
+  connectionDoctor: ConnectionDoctorIssue[];
+  emergencyStopPlans: EmergencyStopPlan[];
 }
 
 export interface TimelineItem {

@@ -579,6 +579,24 @@ function containsAny(input: string, patterns: string[]): boolean {
   return patterns.some((pattern) => input.includes(pattern));
 }
 
+function hasCredentialExposureSignal(input: string): boolean {
+  const containsCredentialPhrase = containsAny(input, ["password", "private key", "secret", "api key", "access token", "bearer", "credential"]);
+  if (!containsCredentialPhrase) return false;
+  const containsConcreteSecretShape = /sk-[a-z0-9_-]{8,}|bearer\s+(?!\[redacted)[a-z0-9._~+/=-]{10,}|akia[0-9a-z]{16}/i.test(input);
+  if (containsConcreteSecretShape) return true;
+  const safeTelemetryContext = containsAny(input, [
+    "redacted",
+    "masked",
+    "token usage",
+    "token metric",
+    "token count",
+    "numeric token",
+    "tokens and cost",
+    "tokens stay visible"
+  ]);
+  return !safeTelemetryContext;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object") return {};
   return value as Record<string, unknown>;
@@ -900,7 +918,7 @@ export class HighRiskNotificationEngine {
         label: "Destructive mutation command pattern detected"
       });
     }
-    if (containsAny(payloadLower, ["password", "private key", "secret", "api key", "access token", "bearer", "credential"])) {
+    if (hasCredentialExposureSignal(payloadLower)) {
       signals.push({
         category: "credential_exposure",
         severity: "high",

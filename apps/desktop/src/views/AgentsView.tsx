@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import {
   Activity,
   AlertOctagon,
-  ArrowRight,
   Bell,
   BookOpen,
   CheckCircle,
@@ -180,6 +179,10 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
         }
       },
       onError: (error) => {
+        if (isConnectionDoctorIssue(error)) {
+          setFeedback(undefined);
+          return;
+        }
         setFeedback({ kind: "error", message: error.message });
       }
     });
@@ -187,7 +190,7 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
   }, []);
 
   useEffect(() => {
-    if (mode === "settings") {
+    if (mode === "settings" || mode === "network") {
       void refreshOpenClawPairings(true);
     }
   }, [mode]);
@@ -228,10 +231,18 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
       }),
     [activityFilter, activitySearch, network.events]
   );
+  const filteredOperatorCards = useMemo(() => {
+    const eventIds = new Set(filteredEvents.map((event) => event.eventId));
+    const sourceCards = network.operatorCards?.length ? network.operatorCards : network.events.map(eventToOperatorCard);
+    return sourceCards.filter((card) => eventIds.has(card.eventId));
+  }, [filteredEvents, network.events, network.operatorCards]);
   const totalCost = network.stats.estimatedSpendUsd;
   const budgetUsage = monthlyBudget > 0 ? Math.min(100, (totalCost / monthlyBudget) * 100) : 0;
   const modelUsage = useMemo(() => buildModelUsage(network), [network]);
   const { title, subtitle } = viewCopy(mode);
+  const selectedEmergencyStopPlan = selectedAgent
+    ? network.emergencyStopPlans?.find((plan) => plan.agentId === selectedAgent.agentId)
+    : undefined;
 
   const refreshNetwork = async () => {
     const next = await loadAgentNetworkSnapshot();
@@ -380,8 +391,12 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
     targetAgent = selectedAgent
   ) => {
     if (!targetAgent) return;
-    const highRisk = action === "emergency_stop" || action === "focus_together";
-    if (highRisk && !window.confirm(`${labelAction(action)} requires confirmation for ${targetAgent.name}.`)) {
+    const highRisk = isMajorControlAction(action);
+    const stopPlan = network.emergencyStopPlans?.find((plan) => plan.agentId === targetAgent.agentId);
+    const confirmationDetail = action === "emergency_stop" && stopPlan
+      ? `\n\nBehavior: ${stopPlan.primaryAction}\nFallback: ${stopPlan.fallbackAction}\nReconnect: ${stopPlan.userReconnectRequired ? "manual approval required" : "automatic reconnect allowed"}`
+      : "";
+    if (highRisk && !window.confirm(`${labelAction(action)} requires confirmation for ${targetAgent.name}.${confirmationDetail}`)) {
       return;
     }
     setBusy(true);
@@ -534,6 +549,21 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
     }
   };
 
+  const openClawPairingFlow: OpenClawPairingFlowState = {
+    pairings: openClawPairings,
+    latestPairing: latestOpenClawPairing,
+    label: openClawPairingLabel,
+    ttlHours: openClawPairingTtlHours,
+    busy: openClawPairingBusy,
+    error: openClawPairingError,
+    onLabelChange: setOpenClawPairingLabel,
+    onTtlHoursChange: setOpenClawPairingTtlHours,
+    onCreate: handleCreateOpenClawPairing,
+    onRefresh: () => void refreshOpenClawPairings(false),
+    onRevoke: handleRevokeOpenClawPairing,
+    onCopy: copyText
+  };
+
   return (
     <section className="view command-center-view">
       <div className="view-header command-center-header">
@@ -558,6 +588,10 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
       </div>
 
       {feedback ? <p className={`feedback ${feedback.kind}`}>{feedback.message}</p> : null}
+
+      {(mode === "dashboard" || mode === "network") && network.activeGoal ? (
+        <ActiveGoalPanel goal={network.activeGoal} agents={network.agents} />
+      ) : null}
 
       {mode === "dashboard" ? (
         <CommandOverview
@@ -675,7 +709,7 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
               <button className="action-btn primary" disabled={busy || !steeringText.trim()} onClick={() => runControl("steer")}>
                 Send Steering
               </button>
-              <AgentDeepDive agent={selectedAgent} />
+              <AgentDeepDive agent={selectedAgent} emergencyStopPlan={selectedEmergencyStopPlan} />
             </>
           ) : (
             <p className="muted-note">No registered agents yet.</p>
@@ -690,7 +724,7 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
           <div className="view-toolbar">
             <div>
               <strong>{network.agents.length} registered agent(s)</strong>
-              <p className="muted-note">FIFA-style cards with trust, usage, skills, connectors, and controls.</p>
+              <p className="muted-note">Agent Cards with trust, usage, skills, connectors, memory summary, and controls.</p>
             </div>
             <div className="segmented-control" role="group" aria-label="Agent card view mode">
               <button className={cardViewMode === "grid" ? "active" : ""} type="button" onClick={() => setCardViewMode("grid")}>
@@ -729,7 +763,7 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
                 <h3>{selectedAgent.name}</h3>
                 <span className={`agent-state-pill ${selectedAgent.bubbleState}`}>{selectedAgent.status}</span>
               </div>
-              <AgentDeepDive agent={selectedAgent} />
+              <AgentDeepDive agent={selectedAgent} emergencyStopPlan={selectedEmergencyStopPlan} />
             </article>
           ) : null}
         </>
@@ -738,6 +772,7 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
       {mode === "activity" ? (
         <ActivityLogView
           events={filteredEvents}
+          operatorCards={filteredOperatorCards}
           search={activitySearch}
           filter={activityFilter}
           onSearch={setActivitySearch}
@@ -758,20 +793,7 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
         <SettingsView
           data={data}
           network={network}
-          pairingFlow={{
-            pairings: openClawPairings,
-            latestPairing: latestOpenClawPairing,
-            label: openClawPairingLabel,
-            ttlHours: openClawPairingTtlHours,
-            busy: openClawPairingBusy,
-            error: openClawPairingError,
-            onLabelChange: setOpenClawPairingLabel,
-            onTtlHoursChange: setOpenClawPairingTtlHours,
-            onCreate: handleCreateOpenClawPairing,
-            onRefresh: () => void refreshOpenClawPairings(false),
-            onRevoke: handleRevokeOpenClawPairing,
-            onCopy: copyText
-          }}
+          pairingFlow={openClawPairingFlow}
         />
       ) : null}
 
@@ -904,6 +926,9 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
           candidates={connectorCandidates}
           connectors={connectorRegistrations}
           busyId={connectorBusy}
+          pairingFlow={openClawPairingFlow}
+          telemetry={data.openClawLive.telemetry}
+          doctorIssues={network.connectionDoctor}
           onDiscover={handleDiscoverConnectors}
           onConnect={handleConnectConnector}
           onValidate={handleValidateConnector}
@@ -911,19 +936,8 @@ export function AgentsView({ data, mode }: { data: DashboardData; mode: ViewKey 
         />
 
         <article className="panel">
-          <h3>Activity</h3>
-          <div className="timeline command-timeline">
-            {network.events.slice(0, 12).map((event) => (
-              <button className="timeline-item timeline-button" key={event.eventId} onClick={() => setSelectedAgentId(event.agentId)}>
-                <div>
-                  <p className="timeline-type">{event.category} / {event.status}</p>
-                  <strong>{event.agentName}</strong>
-                  <p className="muted-note">{event.safeSummary}</p>
-                </div>
-                <span className={`severity ${event.riskLevel}`}>{event.riskLevel}</span>
-              </button>
-            ))}
-          </div>
+          <h3>Operator Cards</h3>
+          <OperatorCardStack cards={(network.operatorCards?.length ? network.operatorCards : network.events.map(eventToOperatorCard)).slice(0, 6)} onSelectAgent={setSelectedAgentId} compact />
         </article>
 
         <article className="panel">
@@ -949,6 +963,9 @@ function ConnectorStrategyPanel({
   candidates,
   connectors,
   busyId,
+  pairingFlow,
+  telemetry,
+  doctorIssues,
   onDiscover,
   onConnect,
   onValidate,
@@ -957,6 +974,9 @@ function ConnectorStrategyPanel({
   candidates: ConnectorDiscoveryCandidate[];
   connectors: ConnectorRegistrationView[];
   busyId?: string;
+  pairingFlow: OpenClawPairingFlowState;
+  telemetry: DashboardData["openClawLive"]["telemetry"];
+  doctorIssues: AgentNetworkSnapshot["connectionDoctor"];
   onDiscover: () => void;
   onConnect: (candidate: ConnectorDiscoveryCandidate) => void;
   onValidate: (connectorId: string) => void;
@@ -990,6 +1010,7 @@ function ConnectorStrategyPanel({
           Discover
         </button>
       </div>
+      <OpenClawMagicPairingCard pairingFlow={pairingFlow} telemetry={telemetry} />
       <div className="connector-path-grid">
         {rows.map((candidate) => {
           const registration = connectors.find((connector) => connector.connectorId === candidate.connectorId);
@@ -1040,7 +1061,138 @@ function ConnectorStrategyPanel({
           <p className="muted-note">Run discovery to generate the customer-facing install, pairing, and validation paths.</p>
         ) : null}
       </div>
+      <ConnectionDoctorPanel issues={doctorIssues} onCopy={onCopy} />
     </article>
+  );
+}
+
+function OpenClawMagicPairingCard({
+  pairingFlow,
+  telemetry
+}: {
+  pairingFlow: OpenClawPairingFlowState;
+  telemetry: DashboardData["openClawLive"]["telemetry"];
+}) {
+  const latestCommand = pairingFlow.latestPairing?.commands.powershell.join("\n");
+  const activePairings = pairingFlow.pairings.filter((pairing) => pairing.active).length;
+  const hasLiveConfirmation = telemetry.requestsAccepted > 0 || telemetry.eventsStored > 0 || pairingFlow.pairings.some((pairing) => Boolean(pairing.lastUsedAt));
+  const steps = [
+    { label: "Choose OpenClaw", complete: true },
+    { label: "Create token", complete: Boolean(pairingFlow.latestPairing) || activePairings > 0 },
+    { label: "Copy command", complete: Boolean(pairingFlow.latestPairing) },
+    { label: "Live confirmation", complete: hasLiveConfirmation }
+  ];
+
+  return (
+    <section className="magic-pairing-card" aria-label="OpenClaw pairing flow">
+      <div className="magic-pairing-copy">
+        <span className="connector-kind-orb">OC</span>
+        <div>
+          <strong>OpenClaw Pairing</strong>
+          <p>Create a tokenized command, paste it into OpenClaw, then watch Theia confirm live telemetry.</p>
+        </div>
+      </div>
+      <div className="pairing-stepper" aria-label="OpenClaw pairing steps">
+        {steps.map((step, index) => (
+          <span className={step.complete ? "complete" : ""} key={step.label}>
+            <i>{step.complete ? <CheckCircle size={13} /> : index + 1}</i>
+            {step.label}
+          </span>
+        ))}
+      </div>
+      <div className="pairing-form-grid compact">
+        <label className="field-col">
+          <span>Pairing label</span>
+          <input value={pairingFlow.label} onChange={(event) => pairingFlow.onLabelChange(event.target.value)} />
+        </label>
+        <label className="field-col">
+          <span>Token life</span>
+          <select value={String(pairingFlow.ttlHours)} onChange={(event) => pairingFlow.onTtlHoursChange(Number(event.target.value))}>
+            <option value="1">1 hour</option>
+            <option value="8">8 hours</option>
+            <option value="24">24 hours</option>
+            <option value="72">3 days</option>
+            <option value="168">7 days</option>
+          </select>
+        </label>
+      </div>
+      <div className="magic-pairing-actions">
+        <button className="action-btn primary" type="button" disabled={pairingFlow.busy} onClick={pairingFlow.onCreate}>
+          <KeyRound size={15} />
+          {pairingFlow.busy ? "Creating..." : "Create Token"}
+        </button>
+        <button className="action-btn neutral" type="button" disabled={pairingFlow.busy || !latestCommand} onClick={() => latestCommand ? pairingFlow.onCopy(latestCommand, "OpenClaw pairing command copied.") : undefined}>
+          <Copy size={15} />
+          Copy Command
+        </button>
+        <button className="action-btn neutral" type="button" disabled={pairingFlow.busy} onClick={pairingFlow.onRefresh}>
+          <RefreshCw size={15} />
+          Check Live
+        </button>
+        <span className={`agent-state-pill ${hasLiveConfirmation ? "active" : activePairings > 0 ? "warning" : "idle"}`}>
+          {hasLiveConfirmation ? "live" : activePairings > 0 ? "paired" : "ready"}
+        </span>
+      </div>
+      {latestCommand ? <code className="connector-command-preview magic-command">{latestCommand}</code> : null}
+      <div className="pairing-health-grid compact">
+        <span><strong>{telemetry.requestsAccepted}</strong><small>accepted</small></span>
+        <span><strong>{telemetry.requestsRejected}</strong><small>rejected</small></span>
+        <span><strong>{telemetry.eventsStored}</strong><small>events</small></span>
+      </div>
+      {pairingFlow.error ? <p className="pairing-error">{pairingFlow.error}</p> : null}
+    </section>
+  );
+}
+
+function ConnectionDoctorPanel({
+  issues,
+  onCopy
+}: {
+  issues: AgentNetworkSnapshot["connectionDoctor"];
+  onCopy: (text: string, successMessage: string) => void;
+}) {
+  const visibleIssues = issues?.length ? issues : [
+    {
+      issueId: "doctor:all-clear",
+      severity: "info" as const,
+      title: "Connection Doctor is clear",
+      diagnosis: "No failed fetch, token, CORS, port, or connector issues are visible right now.",
+      recovery: "Pair an agent or validate a connector to run deeper checks.",
+      checks: ["Local core reachable", "Dashboard has a connector path", "Schema validation ready"]
+    }
+  ];
+  return (
+    <section className="connection-doctor" aria-label="Connection Doctor">
+      <div className="panel-header-row">
+        <div>
+          <h4>Connection Doctor</h4>
+          <p className="muted-note">Specific recovery guidance for failed fetch, bad token, CORS, wrong port, offline service, or missing OpenClaw path.</p>
+        </div>
+        <span className={`agent-state-pill ${visibleIssues.some((issue) => issue.severity === "critical") ? "warning" : "active"}`}>
+          {visibleIssues.length} check(s)
+        </span>
+      </div>
+      <div className="doctor-issue-grid">
+        {visibleIssues.map((issue) => (
+          <article className={`doctor-issue ${issue.severity}`} key={issue.issueId}>
+            <div>
+              <strong>{issue.title}</strong>
+              <p>{issue.diagnosis}</p>
+            </div>
+            <small>{issue.recovery}</small>
+            <ul>
+              {issue.checks.slice(0, 3).map((check) => <li key={check}>{check}</li>)}
+            </ul>
+            {issue.recoveryCommand ? (
+              <button className="action-btn neutral" type="button" onClick={() => onCopy(issue.recoveryCommand!, "Recovery command copied.")}>
+                <Copy size={14} />
+                Copy fix
+              </button>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -1129,6 +1281,45 @@ function StatTile({ label, value, detail }: { label: string; value: string; deta
       <span>{label}</span>
       <strong>{value}</strong>
       <small>{detail}</small>
+    </article>
+  );
+}
+
+function ActiveGoalPanel({ goal, agents }: { goal: AgentNetworkSnapshot["activeGoal"]; agents: AgentCommandCenterAgent[] }) {
+  const linkedAgents = goal.linkedAgentIds
+    .map((agentId) => agents.find((agent) => agent.agentId === agentId)?.name)
+    .filter(Boolean);
+  return (
+    <article className={`panel active-goal-panel ${goal.status}`}>
+      <div className="active-goal-main">
+        <span className="goal-orb"><Focus size={18} /></span>
+        <div>
+          <p className="eyebrow">Active Goal Layer</p>
+          <h3>{goal.title}</h3>
+          <p>{goal.summary}</p>
+        </div>
+      </div>
+      <div className="active-goal-progress">
+        <div>
+          <strong>{Math.round(goal.progressPercent)}%</strong>
+          <span>{goal.currentStep}</span>
+        </div>
+        <ProgressBar value={goal.progressPercent} />
+      </div>
+      <div className="goal-policy-grid">
+        <span><CheckCircle size={14} /> Minor controls: {goal.minorAutonomyAllowed ? "automatic" : "manual"}</span>
+        <span><Shield size={14} /> Major controls: {goal.majorActionRequiresApproval ? "approval required" : "policy automatic"}</span>
+        <span><Users size={14} /> {linkedAgents.length ? linkedAgents.join(", ") : "No agents linked yet"}</span>
+      </div>
+      <div className="goal-criteria-grid">
+        {goal.successCriteria.slice(0, 4).map((criterion) => <span key={criterion}>{criterion}</span>)}
+      </div>
+      {goal.blockers.length > 0 ? (
+        <div className="goal-blockers">
+          <strong>Needs attention</strong>
+          {goal.blockers.slice(0, 3).map((blocker) => <span key={blocker}>{blocker}</span>)}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -1370,7 +1561,13 @@ function NetworkLegend({ agents, links }: { agents: AgentCommandCenterAgent[]; l
   );
 }
 
-function AgentDeepDive({ agent }: { agent: AgentCommandCenterAgent }) {
+function AgentDeepDive({
+  agent,
+  emergencyStopPlan
+}: {
+  agent: AgentCommandCenterAgent;
+  emergencyStopPlan?: AgentNetworkSnapshot["emergencyStopPlans"][number];
+}) {
   const event = agent.latestEvent;
   return (
     <div className="agent-deep-dive">
@@ -1381,6 +1578,19 @@ function AgentDeepDive({ agent }: { agent: AgentCommandCenterAgent }) {
         <div className="stat-chip"><span>RAM</span><strong>{formatBytes(agent.stats.ramBytes)}</strong></div>
       </div>
       <p className="muted-note">{agent.currentTask ?? agent.soulSummary ?? "No current task reported."}</p>
+      {emergencyStopPlan ? (
+        <section className="emergency-plan-card">
+          <div>
+            <strong>Emergency Stop Behavior</strong>
+            <p>{emergencyStopPlan.primaryAction}</p>
+          </div>
+          <small>{emergencyStopPlan.fallbackAction}</small>
+          <div className="emergency-plan-tags">
+            {emergencyStopPlan.affectedResources.slice(0, 4).map((resource) => <span key={resource}>{resource}</span>)}
+          </div>
+          <span>{emergencyStopPlan.userReconnectRequired ? "Manual reconnect required" : "Reconnect can resume by policy"}</span>
+        </section>
+      ) : null}
       {event ? (
         <>
           <h4>Reasoning Summary</h4>
@@ -1500,6 +1710,7 @@ function MiniMetric({ icon, value, label }: { icon: ReactNode; value: string; la
 
 function ActivityLogView({
   events,
+  operatorCards,
   search,
   filter,
   onSearch,
@@ -1507,6 +1718,7 @@ function ActivityLogView({
   onSelectAgent
 }: {
   events: AgentNetworkSnapshot["events"];
+  operatorCards: AgentNetworkSnapshot["operatorCards"];
   search: string;
   filter: "all" | "active" | "blocked" | "completed";
   onSearch: (value: string) => void;
@@ -1517,8 +1729,8 @@ function ActivityLogView({
     <section className="panel activity-log-panel">
       <div className="view-toolbar">
         <div>
-          <h3>Activity Log</h3>
-          <p className="muted-note">Real-time feed of agent actions, tools, targets, tokens, and safe summaries.</p>
+          <h3>Operator Cards</h3>
+          <p className="muted-note">Each agent event is translated into what happened, why it matters, risk, cost, tool, files, and next action.</p>
         </div>
         <div className="activity-filters">
           <label className="search-field">
@@ -1534,26 +1746,51 @@ function ActivityLogView({
           <span className="status-pill promoted"><Filter size={12} /> {events.length}</span>
         </div>
       </div>
-      <div className="activity-log-list">
-        {events.map((event) => (
-          <button className="activity-log-row" key={event.eventId} type="button" onClick={() => onSelectAgent(event.agentId)}>
-            <span className={`activity-icon ${event.riskLevel}`}>{eventIcon(event.category)}</span>
-            <span className="activity-log-copy">
-              <span>
-                <strong>{event.agentName}</strong>
-                <ArrowRight size={13} />
-                <em>{event.category.replace(/_/g, " ")}</em>
-                <i className={`event-status ${event.status}`}>{event.status}</i>
-              </span>
-              <small>{event.safeSummary}</small>
-              <small>{event.toolCalls[0]?.name ?? event.targets[0]?.label ?? "No tool reported"} / {formatNumber(event.usage.totalTokens)} tokens / {relativeTime(event.timestamp)}</small>
-            </span>
-            <span className="action-btn neutral">Inspect</span>
-          </button>
-        ))}
-        {events.length === 0 ? <p className="muted-note">No matching activity yet.</p> : null}
-      </div>
+      <OperatorCardStack cards={operatorCards} onSelectAgent={onSelectAgent} />
     </section>
+  );
+}
+
+function OperatorCardStack({
+  cards,
+  onSelectAgent,
+  compact = false
+}: {
+  cards: AgentNetworkSnapshot["operatorCards"];
+  onSelectAgent: (agentId: string) => void;
+  compact?: boolean;
+}) {
+  if (cards.length === 0) {
+    return <p className="muted-note">No operator cards yet. Pair OpenClaw or register an agent to start the live feed.</p>;
+  }
+  return (
+    <div className={compact ? "operator-card-list compact" : "operator-card-list"}>
+      {cards.map((card) => (
+        <button className={`operator-card ${card.risk}`} key={card.cardId} type="button" onClick={() => onSelectAgent(card.agentId)}>
+          <span className={`activity-icon ${card.risk}`}>{card.risk.slice(0, 3).toUpperCase()}</span>
+          <span className="operator-card-copy">
+            <span>
+              <strong>{card.title}</strong>
+              <i className={`event-status ${card.status}`}>{card.status}</i>
+            </span>
+            <small><b>What happened:</b> {card.whatHappened}</small>
+            <small><b>Why it matters:</b> {card.whyItMatters}</small>
+            {!compact ? <small><b>Next:</b> {card.nextAction}</small> : null}
+          </span>
+          <span className="operator-card-meta">
+            <strong>{formatCurrency(card.costUsd)}</strong>
+            <small>{formatNumber(card.tokens)} tokens</small>
+            <small>{card.toolUsed}</small>
+            <time>{relativeTime(card.timestamp)}</time>
+          </span>
+          {!compact && card.filesTouched.length > 0 ? (
+            <span className="operator-card-files">
+              {card.filesTouched.slice(0, 3).map((file) => <em key={file}>{file}</em>)}
+            </span>
+          ) : null}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -2020,13 +2257,13 @@ function viewCopy(mode: ViewKey): { title: string; subtitle: string } {
       };
     case "cards":
       return {
-        title: "Agent Card Deck",
-        subtitle: "FIFA-style agent cards with model, skills, connectors, trust, memory summary, and controls."
+        title: "Agent Cards",
+        subtitle: "Professional agent cards with model, skills, connectors, trust, memory summary, and controls."
       };
     case "activity":
       return {
-        title: "Live Activity",
-        subtitle: "Search and filter safe reporting events without exposing hidden chain-of-thought."
+        title: "Operator Cards",
+        subtitle: "Search and filter useful activity cards without exposing hidden chain-of-thought."
       };
     case "costs":
       return {
@@ -2117,19 +2354,55 @@ function stringifyConnectorCommands(commands: ConnectorRegistrationView["command
   return lines.join("\n\n");
 }
 
+function eventToOperatorCard(event: AgentNetworkSnapshot["events"][number]): AgentNetworkSnapshot["operatorCards"][number] {
+  const costUsd = event.usage.estimatedCostUsd ?? 0;
+  const tokens = event.usage.totalTokens ?? (event.usage.inputTokens ?? 0) + (event.usage.outputTokens ?? 0);
+  const toolUsed = event.toolCalls[0]?.name ?? event.targets[0]?.label ?? event.apiCalls[0] ?? "No tool reported";
+  return {
+    cardId: `operator-card:${event.eventId}`,
+    eventId: event.eventId,
+    agentId: event.agentId,
+    agentName: event.agentName,
+    timestamp: event.timestamp,
+    title: `${event.agentName} ${event.status === "blocked" || event.status === "failed" ? "needs attention" : "reported progress"}`,
+    whatHappened: event.safeSummary || event.currentTask || "The agent reported activity.",
+    whyItMatters: event.riskLevel === "high" || event.riskLevel === "critical"
+      ? "This activity carries elevated risk and may need operator review."
+      : event.filesAccessed.length > 0
+        ? "The agent touched files, so Theia keeps it visible for audit and rollback context."
+        : "This keeps the network understandable without exposing hidden chain-of-thought.",
+    risk: event.riskLevel,
+    status: event.status,
+    costUsd,
+    tokens,
+    toolUsed,
+    filesTouched: event.filesAccessed,
+    nextAction: event.status === "blocked" || event.status === "failed"
+      ? "Query the agent for a safe explanation."
+      : event.riskLevel === "high" || event.riskLevel === "critical"
+        ? "Review risk and consider pause or emergency stop."
+        : "No action required."
+  };
+}
+
 function connectorErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : "Connector request failed.";
   const lowered = message.toLowerCase();
   if (lowered.includes("failed to fetch") || lowered.includes("unable to reach")) {
-    return `${message} Recovery: start Theia local core, then start the connector service and validate again.`;
+    return `${message} Connection Doctor: local core or CORS is probably blocking the request. Start with cmd /d /c scripts\\start-theia-dashboard.cmd -OpenClawPath "%USERPROFILE%\\src\\openclaw", then refresh and validate again.`;
   }
   if (lowered.includes("auth") || lowered.includes("401") || lowered.includes("403")) {
-    return `${message} Recovery: rotate the agent token or set THEIA_OCTOPODA_API_KEY for cloud mode.`;
+    return `${message} Connection Doctor: auth failed. Create a fresh pairing token or set the explicit cloud API key for that connector.`;
   }
   if (lowered.includes("schema") || lowered.includes("invalid")) {
-    return `${message} Recovery: update the adapter or switch to the agent-activity/v1 reporter helper.`;
+    return `${message} Connection Doctor: the payload did not match agent-activity/v1. Update the adapter or use the reporter helper.`;
   }
   return message;
+}
+
+function isConnectionDoctorIssue(error: Error): boolean {
+  const lowered = error.message.toLowerCase();
+  return lowered.includes("failed to fetch") || lowered.includes("unable to reach") || lowered.includes("cors") || lowered.includes("wrong port");
 }
 
 function eventIcon(category: string): string {
@@ -2223,4 +2496,8 @@ function formatDuration(ms: number | undefined): string {
 
 function labelAction(action: string): string {
   return action.replace(/_/g, " ");
+}
+
+function isMajorControlAction(action: string): boolean {
+  return ["emergency_stop", "focus_together", "make_link", "break_link"].includes(action);
 }
