@@ -9,8 +9,8 @@ interface SidebarProps {
 const NAV_ITEMS: Array<{ key: ViewKey; label: string; meta: string; glyph: string }> = [
   { key: "dashboard", label: "Overview", meta: "Command Surface", glyph: "OVR" },
   { key: "network", label: "Network", meta: "Live Infographic", glyph: "NET" },
-  { key: "cards", label: "Agents", meta: "Card Directory", glyph: "AGT" },
-  { key: "activity", label: "Activity", meta: "Live Event Log", glyph: "ACT" },
+  { key: "cards", label: "Agent Cards", meta: "Card Directory", glyph: "AGT" },
+  { key: "activity", label: "Operator Cards", meta: "Activity Briefs", glyph: "ACT" },
   { key: "costs", label: "Costs", meta: "Usage & Budgets", glyph: "USD" },
   { key: "security", label: "Security", meta: "Audit & Safety", glyph: "SEC" },
   { key: "settings", label: "Settings", meta: "Connections", glyph: "CFG" },

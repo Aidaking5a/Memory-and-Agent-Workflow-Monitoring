@@ -235,13 +235,27 @@ function redactMetadata(value: unknown, depth = 0): unknown {
   const result: Record<string, unknown> = {};
   for (const [key, raw] of Object.entries(value)) {
     if (key.length > 120) continue;
-    if (/(token|secret|password|authorization|api[_-]?key|cookie)/i.test(key)) {
+    if (shouldRedactMetadataKey(key, raw)) {
       result[key] = "[REDACTED]";
       continue;
     }
     result[key] = redactMetadata(raw, depth + 1);
   }
   return result;
+}
+
+function shouldRedactMetadataKey(key: string, value: unknown): boolean {
+  const normalized = key.toLowerCase();
+  if (["inputtokens", "outputtokens", "prompttokens", "completiontokens", "totaltokens"].includes(normalized)) {
+    return false;
+  }
+  if (normalized === "tokens" && (typeof value === "number" || (typeof value === "string" && Number.isFinite(Number(value))))) {
+    return false;
+  }
+  if (normalized === "tokenusage" && value && typeof value === "object") {
+    return false;
+  }
+  return /(token|secret|password|authorization|api[_-]?key|cookie)/i.test(key);
 }
 
 function normalizeSeverity(value: unknown): TelemetrySeverity {

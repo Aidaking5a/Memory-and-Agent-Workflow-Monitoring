@@ -868,12 +868,30 @@ app.post("/openclaw/telemetry/events", async (request, reply) => {
     }
     if (ingest.acceptedEvents.length > 0) {
         const mappedWorkflowEvents = [];
+        const mappedAgentEvents = [];
         for (const event of ingest.acceptedEvents) {
             const mapped = toWorkflowEvent(event);
             mappedWorkflowEvents.push(mapped);
             core.addEvent(mapped);
+            const agentEvent = openClawTelemetryToAgentActivityEvent(event);
+            const parsedAgentEvent = agentActivityEventSchema.safeParse(agentEvent);
+            if (parsedAgentEvent.success) {
+                const sanitized = sanitizeAgentActivityEvent(parsedAgentEvent.data);
+                mappedAgentEvents.push(sanitized);
+                ingestAgentActivityEvent(sanitized);
+            }
         }
         highRiskEngine.ingestEvents(mappedWorkflowEvents);
+        if (mappedAgentEvents.length > 0) {
+            broadcastAgentSse({
+                type: "agent_telemetry",
+                generatedAt: new Date().toISOString(),
+                acceptedCount: mappedAgentEvents.length,
+                rejectedCount: 0,
+                dedupedCount: ingest.dedupedCount,
+                snapshot: buildAgentNetworkSnapshot()
+            });
+        }
     }
     await persistState("openclaw.telemetry.ingest");
     const snapshot = buildOpenClawSseSnapshot();
@@ -2431,6 +2449,159 @@ function toWorkflowEvent(telemetryEvent) {
         evidenceRefs: []
     };
 }
+function openClawTelemetryToAgentActivityEvent(telemetryEvent) {
+    const metadata = telemetryEvent.metadata && typeof telemetryEvent.metadata === "object" ? telemetryEvent.metadata : {};
+    const category = openClawCategoryFromTelemetry(telemetryEvent);
+    const status = openClawAgentStatusFromTelemetry(telemetryEvent.status, telemetryEvent.severity);
+    const riskLevel = openClawRiskFromTelemetry(telemetryEvent.severity);
+    const toolCalls = stringList(metadata.tool ?? metadata.tools ?? metadata.skill ?? metadata.skills).map((name) => ({
+        name,
+        kind: "tool",
+        status: telemetryEvent.status === "failed" ? "failed" : "completed",
+        safeSummary: telemetryEvent.message
+    }));
+    const targets = [
+        {
+            kind: "openclaw_session",
+            label: text(metadata.sessionLabel) ?? telemetryEvent.source,
+            ref: telemetryEvent.sessionId ?? telemetryEvent.runId,
+            redacted: false
+        }
+    ];
+    const targetLabel = text(metadata.website) ?? text(metadata.url) ?? text(metadata.api) ?? text(metadata.app);
+    if (targetLabel) {
+        targets.push({
+            kind: text(metadata.website) || text(metadata.url) ? "website" : text(metadata.api) ? "api" : "app",
+            label: targetLabel,
+            ref: text(metadata.url) ?? targetLabel,
+            redacted: false
+        });
+    }
+    return {
+        schemaVersion: "agent-activity/v1",
+        eventId: `openclaw:${telemetryEvent.id}`,
+        timestamp: telemetryEvent.timestamp,
+        workspaceId: telemetryEvent.workspaceId,
+        runId: telemetryEvent.runId,
+        taskId: telemetryEvent.taskId,
+        agent: {
+            agentId: telemetryEvent.agentId,
+            name: text(metadata.agentName) ?? "OpenClaw Agent",
+            role: text(metadata.role) ?? "OpenClaw Companion",
+            domain: text(metadata.domain) ?? "automation",
+            model: text(metadata.model) ?? text(metadata.modelName) ?? "OpenClaw",
+            vendor: text(metadata.vendor) ?? "OpenClaw",
+            connectionKind: "openclaw"
+        },
+        classification: {
+            category,
+            status,
+            riskLevel,
+            confidence: telemetryEvent.confidence
+        },
+        what: {
+            objective: text(metadata.objective) ?? "Confirm OpenClaw pairing telemetry in Theia.",
+            currentTask: text(metadata.currentTask) ?? telemetryEvent.message,
+            safeSummary: telemetryEvent.message,
+            decisionTrace: [
+                "Received authenticated OpenClaw telemetry through a pairing token.",
+                "Converted the report into agent-activity/v1 for dashboard visibility.",
+                "Redacted raw metadata before storing the operator-facing activity."
+            ]
+        },
+        where: {
+            targets
+        },
+        how: {
+            toolCalls,
+            filesAccessed: stringList(metadata.filesAccessed ?? metadata.files ?? metadata.filePath),
+            websitesVisited: stringList(metadata.websitesVisited ?? metadata.website ?? metadata.url),
+            apiCalls: stringList(metadata.apiCalls ?? metadata.api),
+            collaborationLinkIds: stringList(metadata.collaborationLinkIds),
+            userVisibleExplanation: text(metadata.userVisibleExplanation) ?? "OpenClaw reported a live event using an authenticated pairing token. Theia turned it into an operator card, agent card update, and network bubble."
+        },
+        usage: {
+            inputTokens: Math.max(0, Math.floor(num(metadata.inputTokens ?? metadata.promptTokens) ?? 0)),
+            outputTokens: Math.max(0, Math.floor(num(metadata.outputTokens ?? metadata.completionTokens) ?? 0)),
+            totalTokens: Math.max(0, Math.floor(num(metadata.totalTokens ?? metadata.tokens) ?? 0)),
+            model: text(metadata.model) ?? text(metadata.modelName) ?? "OpenClaw",
+            vendor: text(metadata.vendor) ?? "OpenClaw",
+            apiProvider: text(metadata.apiProvider),
+            estimatedCostUsd: Math.max(0, num(metadata.estimatedCostUsd ?? metadata.costUsd) ?? 0),
+            paidServices: stringList(metadata.paidServices),
+            runtimeMs: Math.max(0, Math.floor(num(metadata.runtimeMs) ?? 0)),
+            cpuPercent: num(metadata.cpuPercent),
+            ramBytes: Math.max(0, Math.floor(num(metadata.ramBytes) ?? 0)),
+            memoryFiles: stringList(metadata.memoryFiles ?? telemetryEvent.memorySummary?.filePathHint),
+            logBytes: Math.max(0, Math.floor(num(metadata.logBytes) ?? 0))
+        },
+        privacy: {
+            redactionApplied: true,
+            sensitiveKinds: ["token", "secret", "authorization"],
+            rawLogRef: telemetryEvent.logSummary?.filePathHint
+        },
+        integrity: {
+            pairingId: telemetryEvent.pairingId,
+            keyId: "openclaw-telemetry"
+        }
+    };
+}
+function openClawCategoryFromTelemetry(telemetryEvent) {
+    const metadata = telemetryEvent.metadata && typeof telemetryEvent.metadata === "object" ? telemetryEvent.metadata : {};
+    const explicit = text(metadata.category)?.toLowerCase();
+    if ([
+        "coding",
+        "research",
+        "browsing",
+        "planning",
+        "writing",
+        "design",
+        "finance",
+        "operations",
+        "customer_support",
+        "file_management",
+        "memory_update",
+        "tool_execution",
+        "idle",
+        "blocked",
+        "error"
+    ].includes(explicit)) {
+        return explicit;
+    }
+    const eventType = telemetryEvent.eventType.toLowerCase();
+    const message = telemetryEvent.message.toLowerCase();
+    if (telemetryEvent.status === "failed" || eventType.includes("failed") || eventType.includes("error"))
+        return "error";
+    if (telemetryEvent.status === "waiting" || message.includes("blocked"))
+        return "blocked";
+    if (eventType.includes("tool"))
+        return "tool_execution";
+    if (eventType.includes("memory") || telemetryEvent.memorySummary)
+        return "memory_update";
+    if (message.includes("code") || message.includes("repo") || message.includes("file"))
+        return "coding";
+    return "operations";
+}
+function openClawAgentStatusFromTelemetry(status, severity) {
+    if (status === "failed")
+        return "failed";
+    if (status === "stopped")
+        return "stopped";
+    if (status === "waiting")
+        return "waiting";
+    if (status === "degraded" || severity === "high" || severity === "critical")
+        return "blocked";
+    return "active";
+}
+function openClawRiskFromTelemetry(severity) {
+    if (severity === "critical")
+        return "critical";
+    if (severity === "high")
+        return "high";
+    if (severity === "medium")
+        return "medium";
+    return "low";
+}
 function quickPluginRows() {
     return pluginListSync().map((plugin) => ({
         ...plugin,
@@ -3146,6 +3317,15 @@ function buildAgentNetworkSnapshot() {
         "blocked",
         "error"
     ];
+    const eventSummaries = events.slice(0, 160).map(summarizeAgentEvent);
+    const connectors = serializeConnectorRegistry();
+    const activeGoal = buildActiveGoalLayer({
+        generatedAt,
+        agents: decoratedAgents,
+        links: activeLinks,
+        events: eventSummaries,
+        connectors
+    });
     return {
         generatedAt,
         workspaceId,
@@ -3188,8 +3368,261 @@ function buildAgentNetworkSnapshot() {
         },
         agents: decoratedAgents,
         links: activeLinks,
-        events: events.slice(0, 160).map(summarizeAgentEvent),
-        commands: agentControlCommands.slice(0, 80)
+        events: eventSummaries,
+        commands: agentControlCommands.slice(0, 80),
+        activeGoal,
+        operatorCards: buildOperatorActivityCards(eventSummaries),
+        connectionDoctor: buildConnectionDoctorIssues({
+            connectors,
+            agents: decoratedAgents,
+            events: eventSummaries
+        }),
+        emergencyStopPlans: decoratedAgents.map(buildEmergencyStopPlan)
+    };
+}
+function buildActiveGoalLayer({ generatedAt, agents, links, events, connectors }) {
+    const openClawAgent = agents.find((agent) => agent.connectionKind === "openclaw");
+    const openClawConnector = connectors.find((connector) => connector.kind === "openclaw");
+    const telemetryHealth = openClawTelemetry.health();
+    const openClawEvents = events.filter((event) => event.agentId === "agent:openclaw" || event.agentName?.toLowerCase().includes("openclaw"));
+    if (openClawEvents.length === 0 || telemetryHealth.metrics.requestsAccepted === 0) {
+        const criteria = [
+            "Theia local core is reachable",
+            "OpenClaw pairing token is created",
+            "Tokenized setup command is copied into OpenClaw",
+            "At least one OpenClaw telemetry event is accepted"
+        ];
+        const completed = [
+            true,
+            telemetryHealth.activePairings > 0,
+            Boolean(openClawConnector),
+            telemetryHealth.metrics.requestsAccepted > 0 || openClawEvents.length > 0
+        ].filter(Boolean).length;
+        const blockers = [];
+        if (!openClawAgent && !openClawConnector) {
+            blockers.push(`OpenClaw has not been paired from ${defaultOpenClawInstallPath}.`);
+        }
+        if (telemetryHealth.metrics.requestsRejected > 0 && telemetryHealth.metrics.requestsAccepted === 0) {
+            blockers.push("OpenClaw telemetry is reaching Theia, but the token or schema is being rejected.");
+        }
+        return {
+            goalId: "goal:openclaw-first-pairing",
+            title: "OpenClaw pairing demo",
+            summary: "Connect OpenClaw with a tokenized command, then confirm live agent reports in the command center.",
+            status: blockers.length > 0 ? "blocked" : "active",
+            ownerAgentId: "agent:theia-orchestrator",
+            progressPercent: Math.round((completed / criteria.length) * 100),
+            currentStep: telemetryHealth.activePairings > 0
+                ? "Paste the generated command into OpenClaw and validate live telemetry."
+                : "Create an OpenClaw pairing token from Connect Agent.",
+            successCriteria: criteria,
+            linkedAgentIds: ["agent:theia-orchestrator", ...(openClawAgent ? [openClawAgent.agentId] : [])],
+            blockers,
+            updatedAt: generatedAt,
+            minorAutonomyAllowed: true,
+            majorActionRequiresApproval: true
+        };
+    }
+    const activeAgentIds = agents.filter((agent) => ["active", "collaborating", "waiting"].includes(agent.status)).map((agent) => agent.agentId);
+    const activeWork = events[0]?.currentTask ?? events[0]?.safeSummary ?? "Keep private agents reporting safely.";
+    return {
+        goalId: "goal:network-current-objective",
+        title: "Current network objective",
+        summary: activeWork,
+        status: events.some((event) => event.status === "blocked" || event.status === "failed") ? "blocked" : "active",
+        ownerAgentId: "agent:theia-orchestrator",
+        progressPercent: Math.round(clamp((events.length > 0 ? 0.42 : 0.18) + activeAgentIds.length * 0.08 + links.filter((link) => link.status === "active").length * 0.08) * 100),
+        currentStep: events[0]?.userVisibleExplanation ?? "Monitor agent activity and keep collaboration links explicit.",
+        successCriteria: [
+            "Agents report safe summaries",
+            "Costs and tokens stay visible",
+            "Major control actions require approval"
+        ],
+        linkedAgentIds: uniq(["agent:theia-orchestrator", ...activeAgentIds]),
+        blockers: events.filter((event) => event.status === "blocked" || event.status === "failed").slice(0, 3).map((event) => `${event.agentName}: ${event.safeSummary}`),
+        updatedAt: generatedAt,
+        minorAutonomyAllowed: true,
+        majorActionRequiresApproval: true
+    };
+}
+function buildOperatorActivityCards(events) {
+    return events.slice(0, 80).map((event) => {
+        const toolUsed = event.toolCalls[0]?.name ?? event.targets[0]?.label ?? event.apiCalls[0] ?? "No tool reported";
+        const costUsd = Number((event.usage.estimatedCostUsd ?? 0).toFixed(4));
+        const tokens = event.usage.totalTokens ?? (event.usage.inputTokens ?? 0) + (event.usage.outputTokens ?? 0);
+        return {
+            cardId: `operator-card:${event.eventId}`,
+            eventId: event.eventId,
+            agentId: event.agentId,
+            agentName: event.agentName,
+            timestamp: event.timestamp,
+            title: `${event.agentName} ${operatorVerbForEvent(event)}`,
+            whatHappened: event.safeSummary || event.currentTask || "The agent reported activity.",
+            whyItMatters: operatorWhyItMatters(event),
+            risk: event.riskLevel,
+            status: event.status,
+            costUsd,
+            tokens,
+            toolUsed,
+            filesTouched: event.filesAccessed.slice(0, 5),
+            nextAction: operatorNextAction(event)
+        };
+    });
+}
+function operatorVerbForEvent(event) {
+    if (event.status === "blocked" || event.status === "failed")
+        return "needs attention";
+    if (event.riskLevel === "high" || event.riskLevel === "critical")
+        return "raised a risk";
+    if (event.status === "collaborating")
+        return "collaborated";
+    if (event.category === "tool_execution")
+        return "used a tool";
+    return "reported progress";
+}
+function operatorWhyItMatters(event) {
+    if (event.riskLevel === "critical" || event.riskLevel === "high") {
+        return "This may affect safety, cost, files, or connector permissions and should stay visible to the operator.";
+    }
+    if ((event.usage.estimatedCostUsd ?? 0) > 1) {
+        return "This event carries measurable spend, so it counts toward the operator budget view.";
+    }
+    if (event.filesAccessed.length > 0) {
+        return "The agent touched local files, which is useful for audit and rollback context.";
+    }
+    if (event.collaborationLinkIds.length > 0) {
+        return "The work moved through an explicit collaboration link, keeping multi-agent activity traceable.";
+    }
+    return "This keeps the live network understandable without exposing hidden chain-of-thought.";
+}
+function operatorNextAction(event) {
+    if (event.status === "blocked" || event.status === "failed")
+        return "Open the agent and query what it needs.";
+    if (event.riskLevel === "critical" || event.riskLevel === "high")
+        return "Review the risk and consider pause or emergency stop.";
+    if (event.status === "waiting")
+        return "Steer the agent or assign a collaborator.";
+    if (event.collaborationLinkIds.length > 0)
+        return "Inspect the linked workflow if the outcome is surprising.";
+    return "No action required.";
+}
+function buildConnectionDoctorIssues({ connectors, agents, events }) {
+    const issues = [];
+    const telemetryHealth = openClawTelemetry.health();
+    if (setup.health.status === "offline") {
+        issues.push({
+            issueId: "doctor:local-core-offline",
+            severity: "critical",
+            title: "Local core appears offline",
+            diagnosis: "The dashboard cannot dependably reach Theia local core on port 4318.",
+            recovery: "Start the dashboard through the bundled command so local core and allowed origins are configured together.",
+            recoveryCommand: `cmd /d /c scripts\\start-theia-dashboard.cmd -OpenClawPath "${defaultOpenClawInstallPath}"`,
+            checks: ["http://localhost:4318 responds", "THEIA_ALLOWED_ORIGINS includes the dashboard URL", "No other process owns port 4318"]
+        });
+    }
+    const openClawConnector = connectors.find((connector) => connector.kind === "openclaw");
+    const openClawAgent = agents.find((agent) => agent.connectionKind === "openclaw");
+    if (!openClawConnector && !openClawAgent) {
+        issues.push({
+            issueId: "doctor:openclaw-not-paired",
+            severity: "warning",
+            title: "OpenClaw is not paired yet",
+            diagnosis: "The first killer demo depends on OpenClaw pairing, but no OpenClaw connector or agent profile is live.",
+            recovery: "Use Connect Agent, choose OpenClaw, create a token, copy the generated command, then validate.",
+            recoveryCommand: `cmd /d /c scripts\\start-theia-dashboard.cmd -OpenClawPath "${defaultOpenClawInstallPath}"`,
+            checks: [`OpenClaw path: ${defaultOpenClawInstallPath}`, "Pairing token exists", "OpenClaw sends agent-activity/v1 events"]
+        });
+    }
+    if (telemetryHealth.metrics.requestsRejected > 0 && telemetryHealth.metrics.requestsAccepted === 0) {
+        issues.push({
+            issueId: "doctor:openclaw-token-or-schema",
+            severity: "critical",
+            title: "OpenClaw telemetry is being rejected",
+            diagnosis: "Theia has received telemetry attempts, but accepted none of them.",
+            recovery: "Create a fresh pairing token and make sure the adapter posts agent-activity/v1 payloads.",
+            checks: ["Bearer token matches the current pairing", "Token has not expired or been revoked", "Payload passes schema validation"],
+            connectorId: "openclaw"
+        });
+    }
+    for (const connector of connectors.filter((entry) => entry.status !== "healthy")) {
+        issues.push({
+            issueId: `doctor:connector:${connector.connectorId}`,
+            severity: connector.status === "offline" ? "critical" : "warning",
+            title: `${connector.displayName} needs validation`,
+            diagnosis: connector.message ?? "The connector is registered but not fully live.",
+            recovery: connector.kind === "octopoda"
+                ? "Start Octopoda locally or set the explicit cloud API key, then validate from Connect Agent."
+                : "Run the shown setup command, then validate from Connect Agent.",
+            recoveryCommand: connector.commands?.powershell?.[0] ?? connector.commands?.start?.[0] ?? connector.commands?.validate?.[0],
+            checks: ["Endpoint reachable", "Auth/token present", "Schema matches agent-activity/v1"],
+            connectorId: connector.connectorId
+        });
+    }
+    if (events.some((event) => event.privacy?.redactionApplied)) {
+        issues.push({
+            issueId: "doctor:redaction-active",
+            severity: "info",
+            title: "Sensitive data redaction is active",
+            diagnosis: "One or more events contained sensitive fields that were redacted before display.",
+            recovery: "Use the safe operator card summary for normal work. Raw logs remain an admin-only surface.",
+            checks: ["Safe summary present", "Raw chain-of-thought hidden", "Sensitive fields redacted"]
+        });
+    }
+    return issues.slice(0, 8);
+}
+function buildEmergencyStopPlan(agent) {
+    const base = {
+        agentId: agent.agentId,
+        connectorKind: agent.connectionKind,
+        auditRequired: true,
+        requiresConfirmation: true,
+        userReconnectRequired: true
+    };
+    if (agent.system) {
+        return {
+            ...base,
+            primaryAction: "Protect the orchestrator from direct emergency stop; pause downstream agents instead.",
+            fallbackAction: "Disable connectors and stop local core from the terminal if the whole system must be shut down.",
+            affectedResources: ["local-core", "dashboard-session"]
+        };
+    }
+    if (agent.connectionKind === "openclaw") {
+        return {
+            ...base,
+            primaryAction: "Stop the OpenClaw gateway, disable OpenClaw runtime polling, revoke the agent telemetry token, and block active collaboration links.",
+            fallbackAction: "Apply a Theia local control lock if the gateway stop command fails.",
+            affectedResources: ["openclaw gateway", "runtime poller", "telemetry token", "collaboration links"]
+        };
+    }
+    if (agent.connectionKind === "api" || agent.connectionKind === "oauth") {
+        return {
+            ...base,
+            primaryAction: "Disable the connector workflow, revoke or pause the token where Theia controls it, and block outgoing commands.",
+            fallbackAction: "Keep a local control lock until the user revokes provider-side credentials.",
+            affectedResources: ["connector session", "telemetry token", "collaboration links"]
+        };
+    }
+    if (agent.connectionKind === "terminal" || agent.connectionKind === "local") {
+        return {
+            ...base,
+            primaryAction: "Apply a local stop lock, revoke telemetry token, and block commands. The dashboard does not run arbitrary shell.",
+            fallbackAction: "Show the operator which process/session to stop manually.",
+            affectedResources: ["local agent profile", "telemetry token", "collaboration links"]
+        };
+    }
+    if (agent.connectionKind === "mcp") {
+        return {
+            ...base,
+            primaryAction: "Block MCP command reads, revoke reporter token, and mark the agent emergency-stopped.",
+            fallbackAction: "Remove the MCP server entry from the client config.",
+            affectedResources: ["MCP tool access", "reporter token", "collaboration links"]
+        };
+    }
+    return {
+        ...base,
+        primaryAction: "Disconnect the registered connector, revoke telemetry, and block active collaboration links.",
+        fallbackAction: "Keep a local control lock until the user confirms manual shutdown.",
+        affectedResources: ["connector", "telemetry token", "collaboration links"]
     };
 }
 function serializeAgentRegistry() {
@@ -3914,7 +4347,7 @@ function redactSensitive(value) {
     if (value && typeof value === "object") {
         const next = {};
         for (const [key, item] of Object.entries(value)) {
-            if (/token|secret|password|apiKey|authorization/i.test(key)) {
+            if (shouldRedactObjectKey(key, item)) {
                 next[key] = "[redacted]";
             }
             else {
@@ -3924,6 +4357,19 @@ function redactSensitive(value) {
         return next;
     }
     return value;
+}
+function shouldRedactObjectKey(key, value) {
+    const normalized = key.toLowerCase();
+    if (["inputtokens", "outputtokens", "prompttokens", "completiontokens", "totaltokens"].includes(normalized)) {
+        return false;
+    }
+    if (normalized === "tokens" && (typeof value === "number" || (typeof value === "string" && Number.isFinite(Number(value))))) {
+        return false;
+    }
+    if (normalized === "tokenusage" && value && typeof value === "object") {
+        return false;
+    }
+    return /token|secret|password|apiKey|authorization/i.test(key);
 }
 async function executeGatewayControl(action) {
     const args = action === "stop" ? ["gateway", "stop"] : ["gateway", "start"];

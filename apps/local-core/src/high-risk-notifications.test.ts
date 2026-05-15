@@ -69,6 +69,23 @@ describe("HighRiskNotificationEngine", () => {
     expect(engine.getActiveBanner()).toBeUndefined();
   });
 
+  it("does not classify redacted token metrics as credential exposure", () => {
+    const engine = new HighRiskNotificationEngine();
+    const summary = engine.ingestEvents([
+      makeEvent({
+        eventId: "evt_token_metrics",
+        eventType: "task.updated",
+        payload: {
+          summary: "Token usage metrics stayed visible while secrets were redacted.",
+          totalTokens: 384
+        }
+      })
+    ]);
+
+    expect(summary.detected).toBe(0);
+    expect(engine.getActiveBanner()).toBeUndefined();
+  });
+
   it("suppresses events when confidence threshold is too high", () => {
     const engine = new HighRiskNotificationEngine();
     engine.updateSettings({

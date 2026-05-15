@@ -124,7 +124,38 @@ export const emptyDashboardData: DashboardData = {
     agents: [],
     links: [],
     events: [],
-    commands: []
+    commands: [],
+    activeGoal: {
+      goalId: "goal:openclaw-first-pairing",
+      title: "Connect the first OpenClaw agent",
+      summary: "Create a tokenized pairing command, paste it into OpenClaw, and confirm live telemetry in Theia.",
+      status: "ready",
+      progressPercent: 24,
+      currentStep: "Create an OpenClaw pairing token.",
+      successCriteria: [
+        "OpenClaw path is reachable",
+        "Pairing token exists",
+        "At least one telemetry event is accepted"
+      ],
+      linkedAgentIds: ["agent:theia-orchestrator"],
+      blockers: [],
+      updatedAt: now,
+      minorAutonomyAllowed: true,
+      majorActionRequiresApproval: true
+    },
+    operatorCards: [],
+    connectionDoctor: [
+      {
+        issueId: "doctor:local-core-offline",
+        severity: "critical",
+        title: "Local core is offline",
+        diagnosis: "The dashboard cannot fetch the private local-core API yet.",
+        recovery: "Start Theia with the local dashboard command, then refresh this page.",
+        recoveryCommand: "cmd /d /c scripts\\start-theia-dashboard.cmd -OpenClawPath \"%USERPROFILE%\\src\\openclaw\"",
+        checks: ["Port 4318 is reachable", "Dashboard origin is allowed", "OpenClaw path is correct"]
+      }
+    ],
+    emergencyStopPlans: []
   },
   timeline: [],
   memory: [],
